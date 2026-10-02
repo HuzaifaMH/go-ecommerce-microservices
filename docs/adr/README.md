@@ -14,3 +14,4 @@ Each record states the context, the decision, the alternatives considered, and t
 | 0008 | [Go engineering practices](0008-go-engineering-practices.md) |
 | 0009 | [Observability with OpenTelemetry, Prometheus and Jaeger](0009-observability.md) |
 | 0010 | [Testing strategy](0010-testing-strategy.md) |
+| 0011 | [sqlc for queries, goose for migrations, migrate on startup](0011-sqlc-goose-and-startup-migrations.md) |

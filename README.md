@@ -62,8 +62,9 @@ Every decision, with alternatives and consequences, is recorded in [docs/adr](do
 Requirements: Go 1.26+, Docker.
 
 ```bash
-make tools      # install pinned buf and protoc plugins into ./bin
+make tools      # install pinned buf, protoc plugins and sqlc into ./bin
 make proto      # regenerate gen/ from api/proto
+make sqlc       # regenerate typed query code
 make up         # start NATS JetStream and PostgreSQL
 make test       # run all tests with the race detector (integration tests need Docker)
 make test-short # fast tests only
@@ -94,7 +95,7 @@ Service boundaries are enforced by the Go compiler (`internal/`); layer boundari
 
 - [x] Phase 0 — repository scaffold, CI, local infrastructure, ADRs
 - [x] Phase 1 — protobuf contracts and shared packages (config, logging, health, runner, messaging, outbox/inbox)
-- [ ] Phase 2 — inventory-service
+- [x] Phase 2 — [inventory-service](services/inventory/README.md)
 - [ ] Phase 3 — payment-service
 - [ ] Phase 4 — order-service and saga
 - [ ] Phase 5 — notification-service
