@@ -2,7 +2,7 @@ Shared, service-agnostic libraries. Nothing here may depend on a specific servic
 
 | Package | Purpose |
 |---|---|
-| `config` | Typed environment configuration that reports every invalid setting at once |
+| `config` | Typed environment configuration (strings, ints, floats, lists, durations) that reports every invalid setting at once |
 | `logging` | `log/slog` logger (JSON or text) tagged with the service name |
 | `health` | `/healthz` liveness and `/readyz` readiness endpoints with pluggable checks |
 | `runner` | Runs a service's tasks together; graceful HTTP and gRPC shutdown on SIGINT/SIGTERM |
