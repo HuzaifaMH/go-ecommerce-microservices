@@ -1,0 +1,9 @@
+.git
+.github
+bin
+docs
+deploy
+*.md
+**/*_test.go
+coverage.*
+node_modules

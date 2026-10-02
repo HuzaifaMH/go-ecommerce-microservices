@@ -31,6 +31,24 @@ services:
       timeout: 3s
       retries: 10
 
+  inventory:
+    build:
+      context: ..
+      dockerfile: services/inventory/Dockerfile
+    environment:
+      DATABASE_URL: postgres://inventory:inventory@postgres:5432/inventory?sslmode=disable
+      NATS_URL: nats://nats:4222
+      SEED_DEMO_DATA: "true"
+      LOG_FORMAT: text
+    ports:
+      - "9090:9090" # gRPC
+      - "8081:8080" # health endpoints
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
 volumes:
   nats-data:
   postgres-data:

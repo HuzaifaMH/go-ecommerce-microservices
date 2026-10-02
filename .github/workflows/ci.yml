@@ -48,7 +48,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install tools
-        run: make tools
+        run: |
+          make tools
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
       - name: Lint
         run: make proto-lint
       - name: Generated code is up to date
@@ -64,6 +66,35 @@ jobs:
           else
             echo "main has no protobuf module yet; skipping breaking-change check"
           fi
+
+  sqlc:
+    name: sqlc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install tools
+        run: make tools
+      - name: Generated query code is up to date
+        run: |
+          make sqlc
+          git diff --exit-code -- 'services/*/internal/adapters/postgres/sqlcgen' || (echo "::error::sqlcgen is stale; run 'make sqlc' and commit the result" && exit 1)
+
+  docker:
+    name: Build image (inventory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/inventory/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   compose:
     name: Validate compose file

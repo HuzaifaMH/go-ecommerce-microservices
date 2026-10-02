@@ -9,4 +9,5 @@ Shared, service-agnostic libraries. Nothing here may depend on a specific servic
 | `messaging` | NATS JetStream publisher (de-duplicates by message ID), durable consumer with ack/retry/terminate semantics, idempotent-handler middleware |
 | `outbox` | Relay that publishes pending outbox rows to the broker |
 | `outbox/pgstore` | PostgreSQL outbox and inbox: `WithTx`, `Enqueue`, `Dispatch` (`FOR UPDATE SKIP LOCKED`), `Once` |
+| `subjects` | JetStream stream and subject names shared between services (part of the contract) |
 | `version` | Build metadata injected with `-ldflags` |

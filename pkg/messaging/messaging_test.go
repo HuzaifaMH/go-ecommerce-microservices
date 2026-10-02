@@ -135,6 +135,37 @@ func TestConsumeDeliversMessageWithIDAndHeaders(t *testing.T) {
 	}
 }
 
+func TestConsumePropagatesCorrelationID(t *testing.T) {
+	js, pub, _ := setup(t)
+
+	got := make(chan string, 1)
+	startConsumer(t, js, func(ctx context.Context, _ Message) error {
+		got <- CorrelationID(ctx)
+		return nil
+	})
+
+	err := pub.Publish(context.Background(), Message{
+		ID: "msg-1", Subject: "order.created", Headers: map[string]string{HeaderCorrelationID: "corr-42"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case id := <-got:
+		if id != "corr-42" {
+			t.Fatalf("CorrelationID = %q, want corr-42", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("message not delivered")
+	}
+}
+
+func TestCorrelationIDDefaultsToEmpty(t *testing.T) {
+	if id := CorrelationID(context.Background()); id != "" {
+		t.Fatalf("CorrelationID = %q, want empty", id)
+	}
+}
+
 func TestConsumeRetriesAfterError(t *testing.T) {
 	js, pub, _ := setup(t)
 

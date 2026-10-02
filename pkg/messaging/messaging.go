@@ -15,6 +15,21 @@ const (
 	HeaderMessageType   = "Message-Type"
 )
 
+type correlationKey struct{}
+
+// WithCorrelationID returns ctx carrying a correlation ID. Consumers set it
+// from the incoming message so replies and logs can be traced back to the
+// request that started the flow.
+func WithCorrelationID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, correlationKey{}, id)
+}
+
+// CorrelationID returns the correlation ID carried by ctx, or "".
+func CorrelationID(ctx context.Context) string {
+	id, _ := ctx.Value(correlationKey{}).(string)
+	return id
+}
+
 // ErrPermanent marks a handler error that retrying cannot fix (for example a
 // malformed payload). The message is terminated instead of redelivered.
 var ErrPermanent = errors.New("permanent failure")
