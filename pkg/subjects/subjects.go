@@ -22,6 +22,21 @@ const (
 	InventoryEvtReleased = "inventory.evt.released" // ecommerce.inventory.v1.StockReleased
 )
 
+// Order service. It orchestrates the order saga, so it consumes the
+// inventory.evt.* and payment.evt.* replies and publishes the two commands
+// above plus its own events.
+const (
+	OrderEvtConfirmed = "order.evt.confirmed" // ecommerce.order.v1.OrderConfirmed
+	OrderEvtCancelled = "order.evt.cancelled" // ecommerce.order.v1.OrderCancelled
+)
+
+// OrderStream carries the order lifecycle events.
+var OrderStream = messaging.StreamConfig{
+	Name:     "ORDER",
+	Subjects: []string{"order.>"},
+	MaxAge:   7 * 24 * time.Hour,
+}
+
 // Payment service.
 const (
 	PaymentCmdCharge = "payment.cmd.charge" // ecommerce.payment.v1.ChargePayment

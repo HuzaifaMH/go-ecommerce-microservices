@@ -21,4 +21,4 @@ Charging involves a slow, unreliable network call to an external provider and a 
 - Connections are held only for short writes.
 - The design relies on the provider honouring idempotency keys, as real processors do. The simulated provider does the same.
 - Duplicate commands produce duplicate (identical) reply events; the order-service must treat payment replies idempotently, which it needs to do anyway because delivery is at-least-once.
-- If every redelivery fails, no reply is ever sent. The order-service saga needs a timeout to cancel such orders; this is planned for Phase 4.
+- If every redelivery fails, no reply is ever sent. The order-service sweeper cancels such orders after `SAGA_TIMEOUT` and releases their stock ([ADR-0013](0013-saga-failure-handling.md)).

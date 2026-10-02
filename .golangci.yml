@@ -2,6 +2,9 @@ version: "2"
 
 run:
   timeout: 5m
+  # Also lint the end-to-end tests, which are excluded from normal builds.
+  build-tags:
+    - e2e
 
 linters:
   default: standard
