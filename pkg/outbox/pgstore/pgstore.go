@@ -124,6 +124,9 @@ func (s *Store) Enqueue(ctx context.Context, m messaging.Message) (string, error
 	if m.Headers == nil {
 		headers = []byte("{}")
 	}
+	if m.Data == nil {
+		m.Data = []byte{} // a nil slice would be stored as NULL and violate NOT NULL
+	}
 	_, err = s.Querier(ctx).Exec(ctx,
 		`INSERT INTO outbox (id, subject, payload, headers) VALUES ($1, $2, $3, $4)`,
 		m.ID, m.Subject, m.Data, headers)
