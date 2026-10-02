@@ -96,7 +96,7 @@ Service boundaries are enforced by the Go compiler (`internal/`); layer boundari
 - [x] Phase 0 — repository scaffold, CI, local infrastructure, ADRs
 - [x] Phase 1 — protobuf contracts and shared packages (config, logging, health, runner, messaging, outbox/inbox)
 - [x] Phase 2 — [inventory-service](services/inventory/README.md)
-- [ ] Phase 3 — payment-service
+- [x] Phase 3 — [payment-service](services/payment/README.md)
 - [ ] Phase 4 — order-service and saga
 - [ ] Phase 5 — notification-service
 - [ ] Phase 6 — api-gateway

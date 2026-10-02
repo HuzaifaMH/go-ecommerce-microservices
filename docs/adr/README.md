@@ -15,3 +15,4 @@ Each record states the context, the decision, the alternatives considered, and t
 | 0009 | [Observability with OpenTelemetry, Prometheus and Jaeger](0009-observability.md) |
 | 0010 | [Testing strategy](0010-testing-strategy.md) |
 | 0011 | [sqlc for queries, goose for migrations, migrate on startup](0011-sqlc-goose-and-startup-migrations.md) |
+| 0012 | [Call the payment provider outside the database transaction; no inbox for charges](0012-payment-provider-outside-transaction.md) |
