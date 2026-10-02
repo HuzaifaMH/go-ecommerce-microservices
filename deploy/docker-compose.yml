@@ -111,6 +111,32 @@ services:
       postgres:
         condition: service_healthy
 
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        SERVICE: gateway
+    environment:
+      # Development only: the gateway mints its own tokens at POST /dev/token.
+      # In any real deployment set JWT_ISSUER, JWT_AUDIENCE and JWT_JWKS_URL
+      # (or JWT_PUBLIC_KEY_FILE) instead, and never DEV_AUTH.
+      DEV_AUTH: "true"
+      ORDER_GRPC_ADDR: order:9090
+      INVENTORY_GRPC_ADDR: inventory:9090
+      NOTIFICATION_GRPC_ADDR: notification:9090
+      CORS_ALLOWED_ORIGINS: http://localhost:4200
+      LOG_FORMAT: text
+    ports:
+      - "8080:8080" # the public REST API
+    depends_on:
+      order:
+        condition: service_started
+      inventory:
+        condition: service_started
+      notification:
+        condition: service_started
+
 volumes:
   nats-data:
   postgres-data:
