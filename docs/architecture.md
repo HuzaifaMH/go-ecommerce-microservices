@@ -1,4 +1,4 @@
-# E-Commerce Microservices in Go â€” Architecture & Build Plan
+# E-Commerce Microservices in Go — Architecture & Build Plan
 
 Working repo name: `go-ecommerce-microservices` (draft, not yet created on GitHub)
 
@@ -35,7 +35,7 @@ Client -> Gateway (REST) -> Order (gRPC CreateOrder)
   Notification: consumes OrderConfirmed / OrderCancelled / PaymentFailed
 ```
 
-Order states: `PENDING â†’ STOCK_RESERVED â†’ CONFIRMED`, or `â†’ CANCELLED` (with the compensation path).
+Order states: `PENDING → STOCK_RESERVED → CONFIRMED`, or `→ CANCELLED` (with the compensation path).
 `CreateOrder` returns `202`-style semantics: the order is accepted as `PENDING`. The client polls `GetOrder` (a streaming `WatchOrder` RPC can be added later).
 
 ## 4. Design decisions (ADR summaries)
@@ -104,7 +104,7 @@ OpenTelemetry traces and metrics with the trace context propagated through gRPC 
 | **Local Kubernetes** | `kind` + Kustomize (base and overlays), health probes, resource limits, HPA on one service | Shows Kubernetes skills |
 | **CI** | GitHub Actions: lint (`golangci-lint`), `buf`, test with `-race`, build multi-stage distroless images, push to GHCR on tags | Shows automation |
 
-Images: multi-stage builds, `CGO_ENABLED=0`, distroless non-root, expected size around 15â€“25 MB per service.
+Images: multi-stage builds, `CGO_ENABLED=0`, distroless non-root, expected size around 15–25 MB per service.
 
 ## 6. Repository standards
 Conventional Commits, branch protection, PR template, CODEOWNERS, `Makefile`, `.golangci.yml`, `.editorconfig`, MIT license, README with an architecture diagram, `CONTRIBUTING.md`, issues and milestones mapped to the phases below, Dependabot, release tags.

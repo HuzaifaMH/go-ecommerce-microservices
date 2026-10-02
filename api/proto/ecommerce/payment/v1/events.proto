@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package ecommerce.payment.v1;
+
+import "ecommerce/common/v1/common.proto";
+
+option go_package = "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/payment/v1;paymentv1";
+
+// Saga command consumed by payment-service (subject payment.cmd.*)
+// and the replies it publishes (subject payment.evt.*).
+
+// ChargePayment asks payment-service to charge for an order. Idempotent per order_id.
+message ChargePayment {
+  string order_id = 1;
+  string customer_id = 2;
+  ecommerce.common.v1.Money amount = 3;
+}
+
+message PaymentSucceeded {
+  string order_id = 1;
+  string payment_id = 2;
+}
+
+message PaymentFailed {
+  string order_id = 1;
+  string reason = 2;
+}

@@ -1,7 +1,7 @@
 # Go E-Commerce Microservices
 
 [![CI](https://github.com/HuzaifaMH/go-ecommerce-microservices/actions/workflows/ci.yml/badge.svg)](https://github.com/HuzaifaMH/go-ecommerce-microservices/actions/workflows/ci.yml)
-![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)
 ![gRPC](https://img.shields.io/badge/gRPC-Protobuf-244c5a)
 ![NATS](https://img.shields.io/badge/NATS-JetStream-27AAE1)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
@@ -59,12 +59,15 @@ Every decision, with alternatives and consequences, is recorded in [docs/adr](do
 
 ## Getting started
 
-Requirements: Go 1.24+, Docker.
+Requirements: Go 1.26+, Docker.
 
 ```bash
-make up      # start NATS JetStream and PostgreSQL
-make test    # run unit tests with the race detector
-make down    # stop everything
+make tools      # install pinned buf and protoc plugins into ./bin
+make proto      # regenerate gen/ from api/proto
+make up         # start NATS JetStream and PostgreSQL
+make test       # run all tests with the race detector (integration tests need Docker)
+make test-short # fast tests only
+make down       # stop everything
 ```
 
 Run `make help` for all targets.
@@ -89,16 +92,16 @@ docs/                 architecture and ADRs
 Service boundaries are enforced by the Go compiler (`internal/`); layer boundaries inside a service are enforced by `test/architecture`. See [ADR-0007](docs/adr/0007-service-code-structure.md).
 ## Roadmap
 
-- [x] Phase 0 â€” repository scaffold, CI, local infrastructure, ADRs
-- [ ] Phase 1 â€” protobuf contracts and shared packages (outbox/inbox, config, health)
-- [ ] Phase 2 â€” inventory-service
-- [ ] Phase 3 â€” payment-service
-- [ ] Phase 4 â€” order-service and saga
-- [ ] Phase 5 â€” notification-service
-- [ ] Phase 6 â€” api-gateway
-- [ ] Phase 7 â€” observability (OpenTelemetry, Prometheus, Grafana, Jaeger)
-- [ ] Phase 8 â€” Kubernetes manifests and release pipeline
-- [ ] Phase 9 â€” Angular admin UI
+- [x] Phase 0 — repository scaffold, CI, local infrastructure, ADRs
+- [x] Phase 1 — protobuf contracts and shared packages (config, logging, health, runner, messaging, outbox/inbox)
+- [ ] Phase 2 — inventory-service
+- [ ] Phase 3 — payment-service
+- [ ] Phase 4 — order-service and saga
+- [ ] Phase 5 — notification-service
+- [ ] Phase 6 — api-gateway
+- [ ] Phase 7 — observability (OpenTelemetry, Prometheus, Grafana, Jaeger)
+- [ ] Phase 8 — Kubernetes manifests and release pipeline
+- [ ] Phase 9 — Angular admin UI
 
 ## License
 

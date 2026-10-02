@@ -22,7 +22,7 @@ jobs:
           go-version-file: go.mod
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.1
+          version: latest
 
   test:
     runs-on: ubuntu-latest
@@ -33,8 +33,37 @@ jobs:
           go-version-file: go.mod
       - name: Build
         run: go build ./...
+      # Docker is available on the runner, so testcontainers-based integration tests run here.
       - name: Test (race detector)
-        run: go test -race -coverprofile=coverage.out ./...
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+  proto:
+    name: Protobuf
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install tools
+        run: make tools
+      - name: Lint
+        run: make proto-lint
+      - name: Generated code is up to date
+        run: |
+          make proto
+          git diff --exit-code -- gen || (echo "::error::gen/ is stale; run 'make proto' and commit the result" && exit 1)
+      - name: Breaking changes
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          if git cat-file -e origin/main:api/proto/buf.yaml 2>/dev/null; then
+            buf breaking api/proto --against '.git#ref=refs/remotes/origin/main,subdir=api/proto'
+          else
+            echo "main has no protobuf module yet; skipping breaking-change check"
+          fi
 
   compose:
     name: Validate compose file

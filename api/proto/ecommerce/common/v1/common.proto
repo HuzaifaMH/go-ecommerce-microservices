@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package ecommerce.common.v1;
+
+option go_package = "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/common/v1;commonv1";
+
+// Money is an amount in the smallest currency unit (e.g. cents), which avoids
+// floating point rounding errors.
+message Money {
+  // ISO 4217 currency code, e.g. "USD".
+  string currency_code = 1;
+  // Amount in minor units, e.g. 1999 for 19.99 USD.
+  int64 amount_minor = 2;
+}
+
+// LineItem is a quantity of a product identified by SKU.
+message LineItem {
+  string sku = 1;
+  int32 quantity = 2;
+}

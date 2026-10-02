@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package ecommerce.payment.v1;
+
+import "ecommerce/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/payment/v1;paymentv1";
+
+// PaymentService exposes read access to payments. Charges are driven by
+// commands on JetStream (see events.proto), not by RPC.
+service PaymentService {
+  rpc GetPayment(GetPaymentRequest) returns (GetPaymentResponse);
+}
+
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+  PAYMENT_STATUS_SUCCEEDED = 1;
+  PAYMENT_STATUS_FAILED = 2;
+}
+
+message Payment {
+  string id = 1;
+  string order_id = 2;
+  ecommerce.common.v1.Money amount = 3;
+  PaymentStatus status = 4;
+  string failure_reason = 5;
+  google.protobuf.Timestamp create_time = 6;
+}
+
+message GetPaymentRequest {
+  // Look up by order, since there is at most one payment per order.
+  string order_id = 1;
+}
+
+message GetPaymentResponse {
+  Payment payment = 1;
+}
