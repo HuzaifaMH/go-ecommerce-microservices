@@ -148,6 +148,10 @@ func dispatch(ctx context.Context, m jetstream.Msg, cfg ConsumerConfig, log *slo
 		Headers: flatten(m.Headers()),
 	}
 	log = log.With("consumer", cfg.Durable, "subject", msg.Subject, "message_id", msg.ID)
+	if id := msg.Headers[HeaderCorrelationID]; id != "" {
+		ctx = WithCorrelationID(ctx, id)
+		log = log.With("correlation_id", id)
+	}
 
 	err := safeHandle(ctx, h, msg)
 	switch {
