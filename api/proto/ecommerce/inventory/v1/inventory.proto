@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package ecommerce.inventory.v1;
+
+import "ecommerce/common/v1/common.proto";
+
+option go_package = "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/inventory/v1;inventoryv1";
+
+// InventoryService exposes read access to stock. Reservations are driven by
+// commands on JetStream (see events.proto), not by RPC.
+service InventoryService {
+  rpc GetStock(GetStockRequest) returns (GetStockResponse);
+  rpc ListStock(ListStockRequest) returns (ListStockResponse);
+}
+
+message StockItem {
+  string sku = 1;
+  string name = 2;
+  ecommerce.common.v1.Money unit_price = 3;
+  // Units available to reserve (on hand minus reserved).
+  int32 available = 4;
+  int32 reserved = 5;
+}
+
+message GetStockRequest {
+  string sku = 1;
+}
+
+message GetStockResponse {
+  StockItem item = 1;
+}
+
+message ListStockRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListStockResponse {
+  repeated StockItem items = 1;
+  string next_page_token = 2;
+}

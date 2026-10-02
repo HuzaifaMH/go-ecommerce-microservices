@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package ecommerce.order.v1;
+
+import "ecommerce/common/v1/common.proto";
+
+option go_package = "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/order/v1;orderv1";
+
+// Domain events published by order-service on JetStream (subject order.evt.*).
+
+// OrderConfirmed is published when stock is reserved and payment succeeded.
+message OrderConfirmed {
+  string order_id = 1;
+  string customer_id = 2;
+  ecommerce.common.v1.Money total = 3;
+}
+
+// OrderCancelled is published when the saga is rolled back or the customer cancels.
+message OrderCancelled {
+  string order_id = 1;
+  string customer_id = 2;
+  string reason = 3;
+}

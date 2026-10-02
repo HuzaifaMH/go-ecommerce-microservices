@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package ecommerce.inventory.v1;
+
+import "ecommerce/common/v1/common.proto";
+
+option go_package = "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/inventory/v1;inventoryv1";
+
+// Saga commands consumed by inventory-service (subject inventory.cmd.*)
+// and the replies it publishes (subject inventory.evt.*).
+
+// ReserveStock asks inventory to reserve all items atomically for an order.
+message ReserveStock {
+  string order_id = 1;
+  repeated ecommerce.common.v1.LineItem items = 2;
+}
+
+// ReleaseStock undoes a reservation (saga compensation). It is idempotent.
+message ReleaseStock {
+  string order_id = 1;
+}
+
+message StockReserved {
+  string order_id = 1;
+}
+
+// StockRejected is published when the whole reservation cannot be satisfied.
+message StockRejected {
+  string order_id = 1;
+  string reason = 2;
+  // SKUs that were short.
+  repeated string unavailable_skus = 3;
+}
+
+message StockReleased {
+  string order_id = 1;
+}
