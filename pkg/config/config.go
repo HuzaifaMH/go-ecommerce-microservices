@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -89,6 +90,36 @@ func (l *Loader) Duration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// Float returns key parsed as a float64, or def when unset.
+func (l *Loader) Float(key string, def float64) float64 {
+	v, ok := l.lookup(key)
+	if !ok || v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		l.errs = append(l.errs, fmt.Errorf("%s: invalid number %q", key, v))
+		return def
+	}
+	return f
+}
+
+// Strings returns key split on commas, with surrounding spaces and empty
+// items removed, or nil when unset.
+func (l *Loader) Strings(key string) []string {
+	v, ok := l.lookup(key)
+	if !ok || v == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // Err returns all accumulated errors joined together, or nil.
