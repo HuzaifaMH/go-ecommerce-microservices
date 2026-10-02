@@ -18,6 +18,7 @@ import (
 
 	commonv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/common/v1"
 	orderv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/order/v1"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/pagination"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/app"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/domain"
 )
@@ -207,11 +208,11 @@ func TestListOrdersPageSizeAndTokenValidation(t *testing.T) {
 	}
 
 	_, _ = c.ListOrders(ctx, &orderv1.ListOrdersRequest{})
-	if f.gotPage != defaultPageSize {
-		t.Errorf("default page size = %d, want %d", f.gotPage, defaultPageSize)
+	if f.gotPage != pagination.DefaultSize {
+		t.Errorf("default page size = %d, want %d", f.gotPage, pagination.DefaultSize)
 	}
 	_, _ = c.ListOrders(ctx, &orderv1.ListOrdersRequest{PageSize: 100000})
-	if f.gotPage != maxPageSize {
+	if f.gotPage != pagination.MaxSize {
 		t.Errorf("page size was not capped: %d", f.gotPage)
 	}
 }

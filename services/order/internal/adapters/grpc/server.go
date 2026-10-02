@@ -2,13 +2,9 @@ package grpc
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
-	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,13 +12,9 @@ import (
 
 	commonv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/common/v1"
 	orderv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/order/v1"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/pagination"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/app"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/domain"
-)
-
-const (
-	defaultPageSize = 50
-	maxPageSize     = 200
 )
 
 // Orders is the part of the application this adapter calls.
@@ -71,20 +63,14 @@ func (s *Server) GetOrder(ctx context.Context, req *orderv1.GetOrderRequest) (*o
 }
 
 func (s *Server) ListOrders(ctx context.Context, req *orderv1.ListOrdersRequest) (*orderv1.ListOrdersResponse, error) {
-	pageSize := int(req.GetPageSize())
-	switch {
-	case pageSize < 0:
-		return nil, status.Error(codes.InvalidArgument, "page_size must not be negative")
-	case pageSize == 0:
-		pageSize = defaultPageSize
-	case pageSize > maxPageSize:
-		pageSize = maxPageSize
+	pageSize, err := pagination.Size(req.GetPageSize())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	after, err := decodeToken(req.GetPageToken())
+	after, err := decodeCursor(req.GetPageToken())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
 	}
-
 	orders, next, err := s.orders.ListOrders(ctx, req.GetCustomerId(), pageSize, after)
 	if err != nil {
 		return nil, s.toStatus("list orders", err)
@@ -94,7 +80,7 @@ func (s *Server) ListOrders(ctx context.Context, req *orderv1.ListOrdersRequest)
 		resp.Orders[i] = toProto(o)
 	}
 	if next != nil {
-		resp.NextPageToken = encodeToken(*next)
+		resp.NextPageToken = pagination.Encode(next.CreatedAt, next.ID)
 	}
 	return resp, nil
 }
@@ -190,27 +176,11 @@ func clampInt32(n int) int32 {
 	return int32(min(n, maxInt32)) //nolint:gosec // clamped to the int32 range
 }
 
-// Page tokens are opaque to clients. Internally: base64url("<unix nanos>|<order id>").
-func encodeToken(c app.Cursor) string {
-	raw := strconv.FormatInt(c.CreatedAt.UnixNano(), 10) + "|" + c.ID
-	return base64.RawURLEncoding.EncodeToString([]byte(raw))
-}
-
-func decodeToken(token string) (*app.Cursor, error) {
-	if token == "" {
-		return nil, nil
-	}
-	b, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
+// decodeCursor turns a page token into the position of the last item already returned.
+func decodeCursor(token string) (*app.Cursor, error) {
+	createdAt, id, ok, err := pagination.Decode(token)
+	if err != nil || !ok {
 		return nil, err
 	}
-	nanos, id, ok := strings.Cut(string(b), "|")
-	if !ok || id == "" {
-		return nil, fmt.Errorf("malformed token")
-	}
-	n, err := strconv.ParseInt(nanos, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-	return &app.Cursor{CreatedAt: time.Unix(0, n).UTC(), ID: id}, nil
+	return &app.Cursor{CreatedAt: createdAt, ID: id}, nil
 }
