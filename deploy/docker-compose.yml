@@ -34,7 +34,9 @@ services:
   inventory:
     build:
       context: ..
-      dockerfile: services/inventory/Dockerfile
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        SERVICE: inventory
     environment:
       DATABASE_URL: postgres://inventory:inventory@postgres:5432/inventory?sslmode=disable
       NATS_URL: nats://nats:4222
@@ -43,6 +45,25 @@ services:
     ports:
       - "9090:9090" # gRPC
       - "8081:8080" # health endpoints
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  payment:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        SERVICE: payment
+    environment:
+      DATABASE_URL: postgres://payments:payments@postgres:5432/payments?sslmode=disable
+      NATS_URL: nats://nats:4222
+      LOG_FORMAT: text
+    ports:
+      - "9091:9090" # gRPC
+      - "8082:8080" # health endpoints
     depends_on:
       nats:
         condition: service_healthy

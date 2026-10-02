@@ -4,14 +4,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
@@ -21,6 +17,7 @@ import (
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/messaging"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox/pgstore"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/platform"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/runner"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/subjects"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/version"
@@ -51,14 +48,11 @@ func run() error {
 
 	ctx := context.Background()
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := platform.OpenPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
-		return fmt.Errorf("connect to postgres: %w", err)
+		return err
 	}
 	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		return fmt.Errorf("ping postgres: %w", err)
-	}
 	if err := pgadapter.Migrate(ctx, pool); err != nil {
 		return err
 	}
@@ -89,30 +83,24 @@ func run() error {
 
 	checks := health.New(2 * time.Second)
 	checks.AddReadiness("postgres", pool.Ping)
-	checks.AddReadiness("nats", func(context.Context) error {
-		if !nc.IsConnected() {
-			return errors.New("not connected")
-		}
-		return nil
-	})
+	checks.AddReadiness("nats", platform.NATSReady(nc))
 
-	grpcLis, err := new(net.ListenConfig).Listen(ctx, "tcp", cfg.GRPCAddr)
+	serveGRPC, err := platform.ServeGRPC(ctx, cfg.GRPCAddr, grpcSrv, cfg.ShutdownTimeout)
 	if err != nil {
-		return fmt.Errorf("listen grpc: %w", err)
+		return err
 	}
-	httpLis, err := new(net.ListenConfig).Listen(ctx, "tcp", cfg.HTTPAddr)
+	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, checks.Routes(), cfg.ShutdownTimeout)
 	if err != nil {
-		return fmt.Errorf("listen http: %w", err)
+		return err
 	}
-	httpSrv := &http.Server{Handler: checks.Routes(), ReadHeaderTimeout: 5 * time.Second}
 
 	relay := outbox.NewRelay(store, messaging.NewJetStreamPublisher(js), log, outbox.Options{})
 	handlers := natsadapter.NewHandlers(svc)
 
 	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr)
 	return runner.Run(ctx, log,
-		runner.GRPCServer(grpcSrv, grpcLis, cfg.ShutdownTimeout),
-		runner.HTTPServer(httpSrv, httpLis, cfg.ShutdownTimeout),
+		serveGRPC,
+		serveHTTP,
 		relay.Run,
 		func(ctx context.Context) error { return natsadapter.Consume(ctx, js, store, handlers, log) },
 	)

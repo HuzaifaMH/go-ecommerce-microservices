@@ -83,18 +83,23 @@ jobs:
           git diff --exit-code -- 'services/*/internal/adapters/postgres/sqlcgen' || (echo "::error::sqlcgen is stale; run 'make sqlc' and commit the result" && exit 1)
 
   docker:
-    name: Build image (inventory)
+    name: Build image (${{ matrix.service }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [inventory, payment]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: services/inventory/Dockerfile
+          file: deploy/docker/Dockerfile
+          build-args: SERVICE=${{ matrix.service }}
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   compose:
     name: Validate compose file

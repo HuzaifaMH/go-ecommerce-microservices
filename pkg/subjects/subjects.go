@@ -22,6 +22,21 @@ const (
 	InventoryEvtReleased = "inventory.evt.released" // ecommerce.inventory.v1.StockReleased
 )
 
+// Payment service.
+const (
+	PaymentCmdCharge = "payment.cmd.charge" // ecommerce.payment.v1.ChargePayment
+
+	PaymentEvtSucceeded = "payment.evt.succeeded" // ecommerce.payment.v1.PaymentSucceeded
+	PaymentEvtFailed    = "payment.evt.failed"    // ecommerce.payment.v1.PaymentFailed
+)
+
+// PaymentStream carries every payment command and event.
+var PaymentStream = messaging.StreamConfig{
+	Name:     "PAYMENT",
+	Subjects: []string{"payment.>"},
+	MaxAge:   7 * 24 * time.Hour,
+}
+
 // InventoryStream carries every inventory command and event.
 var InventoryStream = messaging.StreamConfig{
 	Name:     "INVENTORY",

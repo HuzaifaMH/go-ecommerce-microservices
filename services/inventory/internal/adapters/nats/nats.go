@@ -114,16 +114,12 @@ func (e *Events) StockReleased(ctx context.Context, orderID string) error {
 	return e.enqueue(ctx, subjects.InventoryEvtReleased, &inventoryv1.StockReleased{OrderId: orderID})
 }
 
-func (e *Events) enqueue(ctx context.Context, subject string, msg proto.Message) error {
-	data, err := proto.Marshal(msg)
+func (e *Events) enqueue(ctx context.Context, subject string, payload proto.Message) error {
+	msg, err := messaging.NewProtoMessage(ctx, subject, payload)
 	if err != nil {
-		return fmt.Errorf("marshal %s: %w", subject, err)
+		return err
 	}
-	headers := map[string]string{messaging.HeaderMessageType: string(msg.ProtoReflect().Descriptor().FullName())}
-	if id := messaging.CorrelationID(ctx); id != "" {
-		headers[messaging.HeaderCorrelationID] = id
-	}
-	if _, err := e.outbox.Enqueue(ctx, messaging.Message{Subject: subject, Data: data, Headers: headers}); err != nil {
+	if _, err := e.outbox.Enqueue(ctx, msg); err != nil {
 		return fmt.Errorf("enqueue %s: %w", subject, err)
 	}
 	return nil
