@@ -70,6 +70,28 @@ services:
       postgres:
         condition: service_healthy
 
+  order:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        SERVICE: order
+    environment:
+      DATABASE_URL: postgres://orders:orders@postgres:5432/orders?sslmode=disable
+      NATS_URL: nats://nats:4222
+      INVENTORY_GRPC_ADDR: inventory:9090
+      LOG_FORMAT: text
+    ports:
+      - "9092:9090" # gRPC
+      - "8083:8080" # health endpoints
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      inventory:
+        condition: service_started
+
 volumes:
   nats-data:
   postgres-data:

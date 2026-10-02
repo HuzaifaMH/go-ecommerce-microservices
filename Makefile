@@ -12,7 +12,7 @@ PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 SQLC_VERSION             ?= v1.31.1
 
 # Services that have a database (each has internal/adapters/postgres/sqlc.yaml).
-SQLC_SERVICES := inventory payment
+SQLC_SERVICES := inventory payment order
 SERVICE ?= inventory
 
 .PHONY: help
@@ -73,6 +73,11 @@ test-short: ## Run fast tests only (skips Docker-based integration tests)
 .PHONY: build
 build: ## Build all packages
 	$(GO) build ./...
+
+.PHONY: e2e
+e2e: ## Run end-to-end tests against the full stack (builds images, needs Docker)
+	$(COMPOSE) up -d --build
+	$(GO) test -tags e2e -count=1 ./test/e2e/... ; status=$$?; $(COMPOSE) down -v; exit $$status
 
 .PHONY: up
 up: ## Start local infrastructure (NATS JetStream, Postgres)
