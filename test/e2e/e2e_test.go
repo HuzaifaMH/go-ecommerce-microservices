@@ -34,6 +34,7 @@ import (
 
 	commonv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/common/v1"
 	inventoryv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/inventory/v1"
+	notificationv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/notification/v1"
 	orderv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/order/v1"
 	paymentv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/payment/v1"
 )
@@ -47,9 +48,10 @@ func env(key, def string) string {
 
 // system holds clients for the three services.
 type system struct {
-	orders    orderv1.OrderServiceClient
-	inventory inventoryv1.InventoryServiceClient
-	payments  paymentv1.PaymentServiceClient
+	orders        orderv1.OrderServiceClient
+	inventory     inventoryv1.InventoryServiceClient
+	payments      paymentv1.PaymentServiceClient
+	notifications notificationv1.NotificationServiceClient
 }
 
 func connect(t *testing.T) *system {
@@ -65,11 +67,13 @@ func connect(t *testing.T) *system {
 	waitReady(t, env("E2E_ORDER_HEALTH", "http://localhost:8083/readyz"))
 	waitReady(t, env("E2E_INVENTORY_HEALTH", "http://localhost:8081/readyz"))
 	waitReady(t, env("E2E_PAYMENT_HEALTH", "http://localhost:8082/readyz"))
+	waitReady(t, env("E2E_NOTIFICATION_HEALTH", "http://localhost:8084/readyz"))
 
 	return &system{
-		orders:    orderv1.NewOrderServiceClient(dial(env("E2E_ORDER_ADDR", "localhost:9092"))),
-		inventory: inventoryv1.NewInventoryServiceClient(dial(env("E2E_INVENTORY_ADDR", "localhost:9090"))),
-		payments:  paymentv1.NewPaymentServiceClient(dial(env("E2E_PAYMENT_ADDR", "localhost:9091"))),
+		orders:        orderv1.NewOrderServiceClient(dial(env("E2E_ORDER_ADDR", "localhost:9092"))),
+		inventory:     inventoryv1.NewInventoryServiceClient(dial(env("E2E_INVENTORY_ADDR", "localhost:9090"))),
+		payments:      paymentv1.NewPaymentServiceClient(dial(env("E2E_PAYMENT_ADDR", "localhost:9091"))),
+		notifications: notificationv1.NewNotificationServiceClient(dial(env("E2E_NOTIFICATION_ADDR", "localhost:9093"))),
 	}
 }
 
@@ -152,6 +156,36 @@ func (s *system) waitReserved(t *testing.T, sku string, want int32) {
 	t.Fatalf("%s reserved = %d, want %d", sku, s.stock(t, sku).GetReserved(), want)
 }
 
+// waitNotifications polls until the order has want notifications, none of them pending.
+func (s *system) waitNotifications(t *testing.T, orderID string, want int) map[notificationv1.NotificationChannel]*notificationv1.Notification {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var last []*notificationv1.Notification
+	for time.Now().Before(deadline) {
+		resp, err := s.notifications.ListNotifications(bg, &notificationv1.ListNotificationsRequest{OrderId: orderID})
+		if err != nil {
+			t.Fatalf("ListNotifications: %v", err)
+		}
+		last = resp.GetNotifications()
+		pending := 0
+		for _, n := range last {
+			if n.GetStatus() == notificationv1.NotificationStatus_NOTIFICATION_STATUS_PENDING {
+				pending++
+			}
+		}
+		if len(last) == want && pending == 0 {
+			out := map[notificationv1.NotificationChannel]*notificationv1.Notification{}
+			for _, n := range last {
+				out[n.GetChannel()] = n
+			}
+			return out
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("order %s: want %d final notifications, have %v", orderID, want, last)
+	return nil
+}
+
 func unique(prefix string) string { return prefix + "-" + uuid.NewString()[:8] }
 
 func TestHappyPath(t *testing.T) {
@@ -181,6 +215,36 @@ func TestHappyPath(t *testing.T) {
 	}
 	if p.GetPayment().GetStatus() != paymentv1.PaymentStatus_PAYMENT_STATUS_SUCCEEDED || p.GetPayment().GetAmount().GetAmountMinor() != 2*1299 {
 		t.Errorf("payment = %v", p.GetPayment())
+	}
+
+	// The customer was told: one email, delivered.
+	sent := s.waitNotifications(t, o.GetId(), 1)
+	email := sent[notificationv1.NotificationChannel_NOTIFICATION_CHANNEL_EMAIL]
+	if email.GetStatus() != notificationv1.NotificationStatus_NOTIFICATION_STATUS_SENT ||
+		email.GetKind() != notificationv1.NotificationKind_NOTIFICATION_KIND_ORDER_CONFIRMED ||
+		email.GetCustomerId() != o.GetCustomerId() || !strings.Contains(email.GetBody(), "25.98 USD") {
+		t.Errorf("email = %v", email)
+	}
+}
+
+func TestUndeliverableCustomerDoesNotAffectTheOrder(t *testing.T) {
+	s := connect(t)
+
+	// The simulated sender cannot reach customers whose ID starts with "bounce-".
+	o, err := s.create(t, unique("bounce-dave"), unique("key"), item("BOOK-GO-001", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.waitStatus(t, o.GetId(), orderv1.OrderStatus_ORDER_STATUS_CONFIRMED)
+
+	got := s.waitNotifications(t, o.GetId(), 1)
+	email := got[notificationv1.NotificationChannel_NOTIFICATION_CHANNEL_EMAIL]
+	if email.GetStatus() != notificationv1.NotificationStatus_NOTIFICATION_STATUS_FAILED || email.GetFailureReason() == "" {
+		t.Errorf("email = %v, want a recorded delivery failure", email)
+	}
+	// A notification problem must never undo a paid order.
+	if got := s.waitStatus(t, o.GetId(), orderv1.OrderStatus_ORDER_STATUS_CONFIRMED); got == nil {
+		t.Error("order should stay confirmed")
 	}
 }
 
@@ -220,6 +284,19 @@ func TestDeclinedPaymentCancelsTheOrderAndReleasesStock(t *testing.T) {
 	p, err := s.payments.GetPayment(bg, &paymentv1.GetPaymentRequest{OrderId: o.GetId()})
 	if err != nil || p.GetPayment().GetStatus() != paymentv1.PaymentStatus_PAYMENT_STATUS_FAILED {
 		t.Errorf("payment = %v, err = %v; want a recorded failure", p, err)
+	}
+
+	// The customer was told why: an email and an SMS, both delivered.
+	sent := s.waitNotifications(t, o.GetId(), 2)
+	for _, ch := range []notificationv1.NotificationChannel{
+		notificationv1.NotificationChannel_NOTIFICATION_CHANNEL_EMAIL,
+		notificationv1.NotificationChannel_NOTIFICATION_CHANNEL_SMS,
+	} {
+		n := sent[ch]
+		if n.GetStatus() != notificationv1.NotificationStatus_NOTIFICATION_STATUS_SENT ||
+			n.GetKind() != notificationv1.NotificationKind_NOTIFICATION_KIND_ORDER_CANCELLED || !strings.Contains(n.GetBody(), "payment") {
+			t.Errorf("%s = %v", ch, n)
+		}
 	}
 }
 
