@@ -11,6 +11,7 @@ package architecture
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os/exec"
@@ -38,7 +39,7 @@ var infrastructure = []string{
 
 func listPackages(t *testing.T) []pkg {
 	t.Helper()
-	cmd := exec.Command("go", "list", "-json", "./...")
+	cmd := exec.CommandContext(context.Background(), "go", "list", "-json", "./...")
 	cmd.Dir = "../.."
 	out, err := cmd.Output()
 	if err != nil {

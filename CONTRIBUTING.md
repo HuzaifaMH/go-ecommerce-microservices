@@ -4,7 +4,7 @@
 1. Open an issue (or pick one) and link it in your PR.
 2. Branch from `main`: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`.
 3. Keep PRs small and focused. Update or add an ADR in `docs/adr/` when a design decision changes.
-4. `make test` and `make lint` must pass. CI runs both.
+4. `make test` and `make lint` must pass. CI runs both. After editing `api/proto` run `make proto` and commit `gen/`; CI fails if it is stale.
 
 ## Commit messages
 [Conventional Commits](https://www.conventionalcommits.org/): `feat(order): add saga state machine`, `fix(inventory): release stock on cancel`, `docs: ...`, `test: ...`, `chore: ...`.
