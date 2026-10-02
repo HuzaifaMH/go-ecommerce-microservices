@@ -5,26 +5,15 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/platform"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/inventory/internal/adapters/postgres/sqlcgen"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/inventory/migrations"
 )
 
-// Migrate applies all pending schema migrations.
+// Migrate applies the service's pending schema migrations.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	db := stdlib.OpenDBFromPool(pool)
-	defer func() { _ = db.Close() }() // closes only the database/sql wrapper; the pool stays open
-
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
-	if err != nil {
-		return fmt.Errorf("create migration provider: %w", err)
-	}
-	if _, err := provider.Up(ctx); err != nil {
-		return fmt.Errorf("apply migrations: %w", err)
-	}
-	return nil
+	return platform.Migrate(ctx, pool, migrations.FS)
 }
 
 // demoItems is sample stock for local development.
