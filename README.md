@@ -99,7 +99,7 @@ Service boundaries are enforced by the Go compiler (`internal/`); layer boundari
 - [x] Phase 2 — [inventory-service](services/inventory/README.md)
 - [x] Phase 3 — [payment-service](services/payment/README.md)
 - [x] Phase 4 — [order-service](services/order/README.md) and the saga
-- [ ] Phase 5 — notification-service
+- [x] Phase 5 — [notification-service](services/notification/README.md)
 - [ ] Phase 6 — api-gateway
 - [ ] Phase 7 — observability (OpenTelemetry, Prometheus, Grafana, Jaeger)
 - [ ] Phase 8 — Kubernetes manifests and release pipeline

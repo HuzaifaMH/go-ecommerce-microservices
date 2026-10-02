@@ -17,3 +17,4 @@ Each record states the context, the decision, the alternatives considered, and t
 | 0011 | [sqlc for queries, goose for migrations, migrate on startup](0011-sqlc-goose-and-startup-migrations.md) |
 | 0012 | [Call the payment provider outside the database transaction; no inbox for charges](0012-payment-provider-outside-transaction.md) |
 | 0013 | [How the order saga handles failure](0013-saga-failure-handling.md) |
+| 0014 | [Notification delivery is at-least-once, keyed by order, kind and channel](0014-notification-delivery-guarantees.md) |
