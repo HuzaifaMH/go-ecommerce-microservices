@@ -92,6 +92,25 @@ services:
       inventory:
         condition: service_started
 
+  notification:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        SERVICE: notification
+    environment:
+      DATABASE_URL: postgres://notifications:notifications@postgres:5432/notifications?sslmode=disable
+      NATS_URL: nats://nats:4222
+      LOG_FORMAT: text
+    ports:
+      - "9093:9090" # gRPC
+      - "8084:8080" # health endpoints
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
 volumes:
   nats-data:
   postgres-data:

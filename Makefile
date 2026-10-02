@@ -12,7 +12,7 @@ PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 SQLC_VERSION             ?= v1.31.1
 
 # Services that have a database (each has internal/adapters/postgres/sqlc.yaml).
-SQLC_SERVICES := inventory payment order
+SQLC_SERVICES := inventory payment order notification
 SERVICE ?= inventory
 
 .PHONY: help
