@@ -1,13 +1,104 @@
 // Command payment is the entrypoint for the payment-service.
+// It only wires dependencies together; behaviour lives in internal/.
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"time"
 
+	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+
+	paymentv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/payment/v1"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/health"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/logging"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/messaging"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox/pgstore"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/platform"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/runner"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/subjects"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/version"
+	grpcadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/grpc"
+	natsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/nats"
+	pgadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/postgres"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/provider/simulated"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/app"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/config"
 )
 
 func main() {
-	// Wiring is added in a later phase.
-	fmt.Println("payment-service", version.String())
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "payment-service:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("configuration: %w", err)
+	}
+	log, err := logging.New(os.Stdout, cfg.Log)
+	if err != nil {
+		return err
+	}
+	log.Info("starting", "version", version.String())
+
+	ctx := context.Background()
+
+	pool, err := platform.OpenPostgres(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := pgadapter.Migrate(ctx, pool); err != nil {
+		return err
+	}
+
+	nc, js, err := messaging.Connect(cfg.NATSURL, config.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+	if _, err := messaging.EnsureStream(ctx, js, subjects.PaymentStream); err != nil {
+		return err
+	}
+
+	// Wiring: adapters implement the ports defined by the application layer.
+	store := pgstore.New(pool)
+	repo := pgadapter.NewRepository(store)
+	provider := simulated.New(cfg.SimulatedMaxAmountMinor)
+	svc := app.NewService(provider, repo, repo, natsadapter.NewEvents(store), uuid.NewString)
+
+	grpcSrv := grpc.NewServer()
+	paymentv1.RegisterPaymentServiceServer(grpcSrv, grpcadapter.NewServer(svc, log))
+	reflection.Register(grpcSrv) // lets grpcurl discover the API in development
+
+	checks := health.New(2 * time.Second)
+	checks.AddReadiness("postgres", pool.Ping)
+	checks.AddReadiness("nats", platform.NATSReady(nc))
+
+	serveGRPC, err := platform.ServeGRPC(ctx, cfg.GRPCAddr, grpcSrv, cfg.ShutdownTimeout)
+	if err != nil {
+		return err
+	}
+	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, checks.Routes(), cfg.ShutdownTimeout)
+	if err != nil {
+		return err
+	}
+
+	relay := outbox.NewRelay(store, messaging.NewJetStreamPublisher(js), log, outbox.Options{})
+	handlers := natsadapter.NewHandlers(svc)
+
+	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr)
+	return runner.Run(ctx, log,
+		serveGRPC,
+		serveHTTP,
+		relay.Run,
+		func(ctx context.Context) error { return natsadapter.Consume(ctx, js, handlers, log) },
+	)
 }
