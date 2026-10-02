@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package ecommerce.notification.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/notification/v1;notificationv1";
+
+// NotificationService lets operators and other services see which
+// notifications were sent. Notifications are created by the service itself in
+// reaction to order events (order.evt.* on JetStream), not through this API.
+service NotificationService {
+  // ListNotifications returns notifications newest first, optionally filtered
+  // by order and/or customer.
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+}
+
+enum NotificationKind {
+  NOTIFICATION_KIND_UNSPECIFIED = 0;
+  NOTIFICATION_KIND_ORDER_CONFIRMED = 1;
+  NOTIFICATION_KIND_ORDER_CANCELLED = 2;
+}
+
+enum NotificationChannel {
+  NOTIFICATION_CHANNEL_UNSPECIFIED = 0;
+  NOTIFICATION_CHANNEL_EMAIL = 1;
+  NOTIFICATION_CHANNEL_SMS = 2;
+}
+
+enum NotificationStatus {
+  NOTIFICATION_STATUS_UNSPECIFIED = 0;
+  // Recorded but not delivered yet (or delivery is being retried).
+  NOTIFICATION_STATUS_PENDING = 1;
+  NOTIFICATION_STATUS_SENT = 2;
+  // Permanently undeliverable; it will not be retried.
+  NOTIFICATION_STATUS_FAILED = 3;
+}
+
+message Notification {
+  string id = 1;
+  string order_id = 2;
+  string customer_id = 3;
+  NotificationKind kind = 4;
+  NotificationChannel channel = 5;
+  // Where it was sent. Currently the customer ID is used as the address.
+  string recipient = 6;
+  string subject = 7;
+  string body = 8;
+  NotificationStatus status = 9;
+  // Why delivery failed; set when status is NOTIFICATION_STATUS_FAILED.
+  string failure_reason = 10;
+  google.protobuf.Timestamp create_time = 11;
+  google.protobuf.Timestamp update_time = 12;
+}
+
+message ListNotificationsRequest {
+  // Only notifications for this order. Empty: any order.
+  string order_id = 1;
+  // Only notifications for this customer. Empty: any customer.
+  string customer_id = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListNotificationsResponse {
+  repeated Notification notifications = 1;
+  string next_page_token = 2;
+}
