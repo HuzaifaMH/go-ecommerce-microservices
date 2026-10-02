@@ -11,6 +11,6 @@
 
 ## Code style
 - `gofmt` / `goimports`, enforced by `golangci-lint`.
-- Services never import each other's `internal/` packages; they talk over gRPC or JetStream.
+- Services live under `services/<name>/internal` and talk over gRPC or JetStream only. Inside a service the dependency rule is `adapters -> app -> domain`; `test/architecture` enforces it.
 - Pass `context.Context` as the first parameter; wrap errors with `%w`; no global mutable state.
 - Table-driven tests; run with `-race`.

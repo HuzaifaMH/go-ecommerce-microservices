@@ -1,4 +1,4 @@
-# E-Commerce Microservices in Go — Architecture & Build Plan
+# E-Commerce Microservices in Go â€” Architecture & Build Plan
 
 Working repo name: `go-ecommerce-microservices` (draft, not yet created on GitHub)
 
@@ -35,7 +35,7 @@ Client -> Gateway (REST) -> Order (gRPC CreateOrder)
   Notification: consumes OrderConfirmed / OrderCancelled / PaymentFailed
 ```
 
-Order states: `PENDING → STOCK_RESERVED → CONFIRMED`, or `→ CANCELLED` (with the compensation path).
+Order states: `PENDING â†’ STOCK_RESERVED â†’ CONFIRMED`, or `â†’ CANCELLED` (with the compensation path).
 `CreateOrder` returns `202`-style semantics: the order is accepted as `PENDING`. The client polls `GetOrder` (a streaming `WatchOrder` RPC can be added later).
 
 ## 4. Design decisions (ADR summaries)
@@ -81,19 +81,8 @@ Each becomes a file in `docs/adr/` using Context / Decision / Alternatives / Con
 - **Access:** `pgx` plus `sqlc` (type-safe SQL, no ORM magic). Migrations with `goose`.
 - **Redis:** optional, for gateway rate limiting only. Added only if used.
 
-### ADR-007 Code structure per service (pragmatic hexagonal)
-```
-cmd/<service>/main.go          # wiring only
-internal/<service>/
-  domain/                      # entities, invariants, no I/O imports
-  app/                         # use cases; depends on small interfaces
-  adapters/{grpc,nats,postgres}/
-  config/
-pkg/                           # shared: logging, otel, natsx (outbox/inbox), health, grpcx middleware
-proto/                         # .proto files, one package per service
-```
-- Interfaces are defined where they are consumed, and kept small.
-- Single Go module for the whole repo. Boundaries are enforced with a `depguard` rule (services must not import each other's `internal`). Multi-module is overkill for this size.
+### ADR-007 Service-per-directory layout with clean architecture layers
+Each service lives in `services/<name>/` with `cmd/`, `internal/{domain,app,adapters,config}`, `migrations/`. Shared code is in `pkg/`, contracts in `api/proto`. The Go `internal/` rule blocks cross-service imports at compile time, and `test/architecture` enforces `adapters -> app -> domain` inside each service. Full detail in `docs/adr/0007-service-code-structure.md`.
 
 ### ADR-008 Go practices to showcase
 `context` everywhere with deadlines, `errgroup` for lifecycle and graceful shutdown, wrapped errors with `errors.Is/As`, `log/slog` structured logging, table-driven tests, `-race` in CI, worker pools or bounded concurrency in the outbox relay, config from environment variables with validation at startup, health and readiness endpoints.
@@ -115,7 +104,7 @@ OpenTelemetry traces and metrics with the trace context propagated through gRPC 
 | **Local Kubernetes** | `kind` + Kustomize (base and overlays), health probes, resource limits, HPA on one service | Shows Kubernetes skills |
 | **CI** | GitHub Actions: lint (`golangci-lint`), `buf`, test with `-race`, build multi-stage distroless images, push to GHCR on tags | Shows automation |
 
-Images: multi-stage builds, `CGO_ENABLED=0`, distroless non-root, expected size around 15–25 MB per service.
+Images: multi-stage builds, `CGO_ENABLED=0`, distroless non-root, expected size around 15â€“25 MB per service.
 
 ## 6. Repository standards
 Conventional Commits, branch protection, PR template, CODEOWNERS, `Makefile`, `.golangci.yml`, `.editorconfig`, MIT license, README with an architecture diagram, `CONTRIBUTING.md`, issues and milestones mapped to the phases below, Dependabot, release tags.

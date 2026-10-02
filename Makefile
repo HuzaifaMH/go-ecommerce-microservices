@@ -24,7 +24,7 @@ lint: ## Run golangci-lint (must be installed)
 
 .PHONY: test
 test: ## Run unit tests with the race detector
-	$(GO) test -race -cover ./...
+	$(GO) test -race -count=1 -cover ./...
 
 .PHONY: build
 build: ## Build all packages

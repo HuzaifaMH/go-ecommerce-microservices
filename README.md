@@ -72,26 +72,33 @@ Run `make help` for all targets.
 ## Repository layout
 
 ```
-cmd/<service>/        entrypoints (wiring only)
-internal/<service>/   domain, application and adapters per service
-pkg/                  shared infrastructure (logging, config, messaging, ...)
-proto/                Protobuf definitions
+api/proto/            Protobuf contracts (buf)
+gen/                  Generated Go code
+services/<service>/   One self-contained directory per service
+  cmd/<service>/        entrypoint (wiring only)
+  internal/domain/      entities and business rules
+  internal/app/         use cases and ports
+  internal/adapters/    gRPC, JetStream, Postgres implementations
+  migrations/           SQL migrations
+pkg/                  shared, service-agnostic libraries
 deploy/               Docker Compose, Kubernetes manifests
+test/                 architecture and end-to-end tests
 docs/                 architecture and ADRs
 ```
 
+Service boundaries are enforced by the Go compiler (`internal/`); layer boundaries inside a service are enforced by `test/architecture`. See [ADR-0007](docs/adr/0007-service-code-structure.md).
 ## Roadmap
 
-- [x] Phase 0 — repository scaffold, CI, local infrastructure, ADRs
-- [ ] Phase 1 — protobuf contracts and shared packages (outbox/inbox, config, health)
-- [ ] Phase 2 — inventory-service
-- [ ] Phase 3 — payment-service
-- [ ] Phase 4 — order-service and saga
-- [ ] Phase 5 — notification-service
-- [ ] Phase 6 — api-gateway
-- [ ] Phase 7 — observability (OpenTelemetry, Prometheus, Grafana, Jaeger)
-- [ ] Phase 8 — Kubernetes manifests and release pipeline
-- [ ] Phase 9 — Angular admin UI
+- [x] Phase 0 â€” repository scaffold, CI, local infrastructure, ADRs
+- [ ] Phase 1 â€” protobuf contracts and shared packages (outbox/inbox, config, health)
+- [ ] Phase 2 â€” inventory-service
+- [ ] Phase 3 â€” payment-service
+- [ ] Phase 4 â€” order-service and saga
+- [ ] Phase 5 â€” notification-service
+- [ ] Phase 6 â€” api-gateway
+- [ ] Phase 7 â€” observability (OpenTelemetry, Prometheus, Grafana, Jaeger)
+- [ ] Phase 8 â€” Kubernetes manifests and release pipeline
+- [ ] Phase 9 â€” Angular admin UI
 
 ## License
 
