@@ -12,7 +12,8 @@ PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 SQLC_VERSION             ?= v1.31.1
 
 # Services that have a database (each has internal/adapters/postgres/sqlc.yaml).
-SQLC_SERVICES := inventory
+SQLC_SERVICES := inventory payment
+SERVICE ?= inventory
 
 .PHONY: help
 help: ## Show available targets
@@ -42,8 +43,8 @@ sqlc: ## Regenerate type-safe query code for every service
 	@for s in $(SQLC_SERVICES); do (cd services/$$s/internal/adapters/postgres && sqlc generate) || exit 1; done
 
 .PHONY: docker-build
-docker-build: ## Build the inventory-service image
-	docker build -f services/inventory/Dockerfile -t inventory-service:dev .
+docker-build: ## Build a service image: make docker-build SERVICE=inventory
+	docker build -f deploy/docker/Dockerfile --build-arg SERVICE=$(SERVICE) -t $(SERVICE)-service:dev .
 
 .PHONY: tidy
 tidy: ## Sync go.mod and go.sum
