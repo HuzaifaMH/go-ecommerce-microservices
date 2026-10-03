@@ -122,7 +122,7 @@ func newEnv(t *testing.T) *env {
 		_ = outbox.NewRelay(store, pub, discard, outbox.Options{PollInterval: 20 * time.Millisecond}).Run(ctx)
 	}()
 	go func() {
-		_ = natsadapter.Consume(ctx, js, store, natsadapter.NewHandlers(svc), discard)
+		_ = natsadapter.Consume(ctx, js, store, natsadapter.NewHandlers(svc), discard, nil)
 	}()
 
 	// Observe replies like the order-service would.

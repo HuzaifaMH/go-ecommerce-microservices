@@ -17,6 +17,7 @@ import (
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/health"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/logging"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/messaging"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox/pgstore"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/platform"
@@ -25,6 +26,7 @@ import (
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/version"
 	grpcadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/adapters/grpc"
 	inventoryadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/adapters/inventory"
+	metricsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/adapters/metrics"
 	natsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/adapters/nats"
 	pgadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/adapters/postgres"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/app"
@@ -54,6 +56,16 @@ func run() error {
 
 	ctx := context.Background()
 
+	inst, err := observability.Start(ctx, config.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := inst.Close(5 * time.Second); err != nil {
+			log.Warn("flushing traces failed", "error", err)
+		}
+	}()
+
 	pool, err := platform.OpenPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -77,8 +89,10 @@ func run() error {
 	}
 
 	// gRPC client for pricing. The connection is established lazily, so the
-	// order service starts even if inventory is not up yet.
-	invConn, err := grpc.NewClient(cfg.InventoryAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// order service starts even if inventory is not up yet. Calls are traced
+	// (the trace continues into inventory) and measured.
+	invConn, err := grpc.NewClient(cfg.InventoryAddr,
+		append(inst.DialOptions(), grpc.WithTransportCredentials(insecure.NewCredentials()))...)
 	if err != nil {
 		return fmt.Errorf("inventory client: %w", err)
 	}
@@ -97,9 +111,9 @@ func run() error {
 		Log:      log,
 		NewID:    uuid.NewString,
 		Now:      func() time.Time { return time.Now().UTC() },
-	})
+	}).WithMetrics(metricsadapter.New(inst.Registry))
 
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(inst.ServerOptions()...)
 	orderv1.RegisterOrderServiceServer(grpcSrv, grpcadapter.NewServer(svc, log))
 	reflection.Register(grpcSrv) // lets grpcurl discover the API in development
 
@@ -111,21 +125,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, checks.Routes(), cfg.ShutdownTimeout)
+	// /metrics shares the internal health port; it is never exposed publicly.
+	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, observability.WithMetrics(checks.Routes(), inst.Registry), cfg.ShutdownTimeout)
 	if err != nil {
 		return err
 	}
 
-	relay := outbox.NewRelay(store, messaging.NewJetStreamPublisher(js), log, outbox.Options{})
+	relay := outbox.NewRelay(store, messaging.NewJetStreamPublisher(js, messaging.WithObserver(inst.Messaging)), log, outbox.Options{})
+	gauges := observability.NewOutboxGauges(inst.Registry)
 	handlers := natsadapter.NewHandlers(svc)
 
 	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr, "inventory", cfg.InventoryAddr,
-		"saga_timeout", cfg.SagaTimeout.String())
+		"saga_timeout", cfg.SagaTimeout.String(), "tracing", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "")
 	return runner.Run(ctx, log,
 		serveGRPC,
 		serveHTTP,
 		relay.Run,
-		func(ctx context.Context) error { return natsadapter.Consume(ctx, js, store, handlers, log) },
+		func(ctx context.Context) error { return gauges.Run(ctx, store, 5*time.Second, log) },
+		func(ctx context.Context) error {
+			return natsadapter.Consume(ctx, js, store, handlers, log, inst.Messaging)
+		},
 		func(ctx context.Context) error {
 			return svc.RunSweeper(ctx, cfg.SagaTimeout, cfg.SweepInterval, sweepBatch)
 		},

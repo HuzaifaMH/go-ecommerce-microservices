@@ -96,7 +96,7 @@ func permanent(err error) error {
 // Consume runs the consumers for inventory and payment replies until ctx is
 // cancelled. Each reply goes through the inbox, so redelivery never advances
 // the saga twice.
-func Consume(ctx context.Context, js jetstream.JetStream, inbox messaging.Inbox, h *Handlers, log *slog.Logger) error {
+func Consume(ctx context.Context, js jetstream.JetStream, inbox messaging.Inbox, h *Handlers, log *slog.Logger, obs messaging.Observer) error {
 	handler := messaging.Idempotent(consumerName, inbox, h.Handle)
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -104,12 +104,14 @@ func Consume(ctx context.Context, js jetstream.JetStream, inbox messaging.Inbox,
 		return messaging.Consume(ctx, js, messaging.ConsumerConfig{
 			Stream: subjects.InventoryStream.Name, Durable: consumerName,
 			FilterSubjects: []string{subjects.InventoryEvtReserved, subjects.InventoryEvtRejected},
+			Observer:       obs,
 		}, log, handler)
 	})
 	g.Go(func() error {
 		return messaging.Consume(ctx, js, messaging.ConsumerConfig{
 			Stream: subjects.PaymentStream.Name, Durable: consumerName,
 			FilterSubjects: []string{subjects.PaymentEvtSucceeded, subjects.PaymentEvtFailed},
+			Observer:       obs,
 		}, log, handler)
 	})
 	return g.Wait()

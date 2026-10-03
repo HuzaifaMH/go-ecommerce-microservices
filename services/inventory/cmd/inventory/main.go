@@ -15,6 +15,7 @@ import (
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/health"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/logging"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/messaging"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox/pgstore"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/platform"
@@ -22,6 +23,7 @@ import (
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/subjects"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/version"
 	grpcadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/inventory/internal/adapters/grpc"
+	metricsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/inventory/internal/adapters/metrics"
 	natsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/inventory/internal/adapters/nats"
 	pgadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/inventory/internal/adapters/postgres"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/inventory/internal/app"
@@ -47,6 +49,16 @@ func run() error {
 	log.Info("starting", "version", version.String())
 
 	ctx := context.Background()
+
+	inst, err := observability.Start(ctx, config.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := inst.Close(5 * time.Second); err != nil {
+			log.Warn("flushing traces failed", "error", err)
+		}
+	}()
 
 	pool, err := platform.OpenPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -75,9 +87,9 @@ func run() error {
 	// Wiring: adapters implement the ports defined by the application layer.
 	store := pgstore.New(pool)
 	repo := pgadapter.NewRepository(store)
-	svc := app.NewService(repo, repo, natsadapter.NewEvents(store))
+	svc := app.NewService(repo, repo, natsadapter.NewEvents(store)).WithMetrics(metricsadapter.New(inst.Registry))
 
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(inst.ServerOptions()...)
 	inventoryv1.RegisterInventoryServiceServer(grpcSrv, grpcadapter.NewServer(svc, log))
 	reflection.Register(grpcSrv) // lets grpcurl discover the API in development
 
@@ -89,19 +101,24 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, checks.Routes(), cfg.ShutdownTimeout)
+	// /metrics shares the internal health port; it is never exposed publicly.
+	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, observability.WithMetrics(checks.Routes(), inst.Registry), cfg.ShutdownTimeout)
 	if err != nil {
 		return err
 	}
 
-	relay := outbox.NewRelay(store, messaging.NewJetStreamPublisher(js), log, outbox.Options{})
+	relay := outbox.NewRelay(store, messaging.NewJetStreamPublisher(js, messaging.WithObserver(inst.Messaging)), log, outbox.Options{})
+	gauges := observability.NewOutboxGauges(inst.Registry)
 	handlers := natsadapter.NewHandlers(svc)
 
-	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr)
+	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr, "tracing", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "")
 	return runner.Run(ctx, log,
 		serveGRPC,
 		serveHTTP,
 		relay.Run,
-		func(ctx context.Context) error { return natsadapter.Consume(ctx, js, store, handlers, log) },
+		func(ctx context.Context) error { return gauges.Run(ctx, store, 5*time.Second, log) },
+		func(ctx context.Context) error {
+			return natsadapter.Consume(ctx, js, store, handlers, log, inst.Messaging)
+		},
 	)
 }

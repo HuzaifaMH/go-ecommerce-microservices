@@ -62,11 +62,12 @@ func permanent(err error) error {
 // It deliberately does not use the inbox: charging is idempotent per order
 // (one payment row per order, idempotency key at the provider), and an inbox
 // transaction would stay open during the provider call.
-func Consume(ctx context.Context, js jetstream.JetStream, h *Handlers, log *slog.Logger) error {
+func Consume(ctx context.Context, js jetstream.JetStream, h *Handlers, log *slog.Logger, obs messaging.Observer) error {
 	return messaging.Consume(ctx, js, messaging.ConsumerConfig{
 		Stream:         subjects.PaymentStream.Name,
 		Durable:        consumerName,
 		FilterSubjects: []string{subjects.PaymentCmdCharge},
+		Observer:       obs,
 	}, log, h.Handle)
 }
 

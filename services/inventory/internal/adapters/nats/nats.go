@@ -74,11 +74,12 @@ func permanent(err error) error {
 
 // Consume runs the inventory command consumer until ctx is cancelled. Each
 // message is processed through the inbox, so redelivery never reserves twice.
-func Consume(ctx context.Context, js jetstream.JetStream, inbox messaging.Inbox, h *Handlers, log *slog.Logger) error {
+func Consume(ctx context.Context, js jetstream.JetStream, inbox messaging.Inbox, h *Handlers, log *slog.Logger, obs messaging.Observer) error {
 	return messaging.Consume(ctx, js, messaging.ConsumerConfig{
 		Stream:         subjects.InventoryStream.Name,
 		Durable:        consumerName,
 		FilterSubjects: []string{subjects.InventoryCmdReserve, subjects.InventoryCmdRelease},
+		Observer:       obs,
 	}, log, messaging.Idempotent(consumerName, inbox, h.Handle))
 }
 

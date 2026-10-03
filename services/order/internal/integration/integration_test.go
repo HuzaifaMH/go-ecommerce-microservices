@@ -201,7 +201,7 @@ func newEnv(t *testing.T, sagaTimeout time.Duration) *env {
 	go func() {
 		_ = outbox.NewRelay(store, pub, discard, outbox.Options{PollInterval: 20 * time.Millisecond}).Run(ctx)
 	}()
-	go func() { _ = natsadapter.Consume(ctx, js, store, natsadapter.NewHandlers(svc), discard) }()
+	go func() { _ = natsadapter.Consume(ctx, js, store, natsadapter.NewHandlers(svc), discard, nil) }()
 	go func() { _ = svc.RunSweeper(ctx, sagaTimeout, 100*time.Millisecond, 100) }()
 
 	got := &seen{confirmed: map[string]int{}, cancelled: map[string]string{}, corr: map[string]string{}}

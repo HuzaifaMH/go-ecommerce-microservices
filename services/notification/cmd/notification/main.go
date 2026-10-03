@@ -16,11 +16,13 @@ import (
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/health"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/logging"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/messaging"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/platform"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/runner"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/subjects"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/version"
 	grpcadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/notification/internal/adapters/grpc"
+	metricsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/notification/internal/adapters/metrics"
 	natsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/notification/internal/adapters/nats"
 	pgadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/notification/internal/adapters/postgres"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/notification/internal/adapters/sender/simulated"
@@ -48,6 +50,16 @@ func run() error {
 
 	ctx := context.Background()
 
+	inst, err := observability.Start(ctx, config.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := inst.Close(5 * time.Second); err != nil {
+			log.Warn("flushing traces failed", "error", err)
+		}
+	}()
+
 	pool, err := platform.OpenPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -74,9 +86,9 @@ func run() error {
 		log,
 		uuid.NewString,
 		func() time.Time { return time.Now().UTC() },
-	)
+	).WithMetrics(metricsadapter.New(inst.Registry))
 
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(inst.ServerOptions()...)
 	notificationv1.RegisterNotificationServiceServer(grpcSrv, grpcadapter.NewServer(svc, log))
 	reflection.Register(grpcSrv) // lets grpcurl discover the API in development
 
@@ -88,17 +100,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, checks.Routes(), cfg.ShutdownTimeout)
+	// /metrics shares the internal health port; it is never exposed publicly.
+	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, observability.WithMetrics(checks.Routes(), inst.Registry), cfg.ShutdownTimeout)
 	if err != nil {
 		return err
 	}
 
 	handlers := natsadapter.NewHandlers(svc)
 
-	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr)
+	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr, "tracing", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "")
 	return runner.Run(ctx, log,
 		serveGRPC,
 		serveHTTP,
-		func(ctx context.Context) error { return natsadapter.Consume(ctx, js, handlers, log) },
+		func(ctx context.Context) error { return natsadapter.Consume(ctx, js, handlers, log, inst.Messaging) },
 	)
 }
