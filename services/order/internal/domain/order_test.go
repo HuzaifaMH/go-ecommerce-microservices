@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -194,6 +195,23 @@ func TestMarkRefundRequired(t *testing.T) {
 	got := o.MarkRefundRequired(now.Add(time.Hour))
 	if !got.RefundRequired || o.RefundRequired {
 		t.Fatalf("got %v, original %v", got.RefundRequired, o.RefundRequired)
+	}
+}
+
+func TestCancelCauseGroupsFreeTextIntoAFixedSet(t *testing.T) {
+	tests := map[string]string{
+		"payment failed: card declined":    "payment_failed",
+		"out of stock: insufficient stock": "out_of_stock",
+		"saga timeout":                     "timeout",
+		"cancelled by customer":            "customer",
+		"changed my mind":                  "customer",
+		"":                                 "customer",
+		"a very long free text typed by a user " + strings.Repeat("x", 500): "customer", // never leaks into a label
+	}
+	for reason, want := range tests {
+		if got := CancelCause(reason); got != want {
+			t.Errorf("CancelCause(%.40q) = %q, want %q", reason, got, want)
+		}
 	}
 }
 

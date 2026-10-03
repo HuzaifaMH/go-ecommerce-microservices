@@ -66,6 +66,7 @@ migrations/                        goose SQL migrations (embedded in the binary)
 | `SWEEP_INTERVAL` | `10s` | How often the timeout sweeper runs |
 | `GRPC_ADDR` / `HTTP_ADDR` | `:9090` / `:8080` | gRPC and `/healthz` `/readyz` |
 | `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown limit |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | | OTLP/gRPC endpoint for traces (e.g. `http://jaeger:4317`); unset disables export. `/metrics` is served on `HTTP_ADDR` |
 | `LOG_LEVEL` / `LOG_FORMAT` | `info` / `json` | `debug\|info\|warn\|error`, `json\|text` |
 
 ## Try it

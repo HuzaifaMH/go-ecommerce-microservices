@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -231,6 +232,22 @@ func (o Order) Cancel(reason string, now time.Time) (Order, error) {
 		return o, ErrCannotCancel
 	default:
 		return o, fmt.Errorf("%w: cancel while %s", ErrInvalidTransition, o.Status)
+	}
+}
+
+// CancelCause groups a cancellation reason into a small fixed set of causes
+// ("payment_failed", "out_of_stock", "timeout", "customer"), for metrics. A
+// reason is free text, so it must never be used as a metric label directly.
+func CancelCause(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "payment failed"):
+		return "payment_failed"
+	case strings.HasPrefix(reason, "out of stock"):
+		return "out_of_stock"
+	case reason == "saga timeout":
+		return "timeout"
+	default:
+		return "customer"
 	}
 }
 

@@ -237,6 +237,34 @@ func TestUndeliverableIsRecordedAsFailedAndNotRetried(t *testing.T) {
 	}
 }
 
+type fakeMetrics struct{ deliveries []string }
+
+func (m *fakeMetrics) Delivery(ch domain.Channel, outcome string) {
+	m.deliveries = append(m.deliveries, string(ch)+"/"+outcome)
+}
+
+func TestMetricsCountEveryDeliveryAttemptByOutcome(t *testing.T) {
+	h := setup()
+	m := &fakeMetrics{}
+	h.svc.WithMetrics(m)
+
+	// SMS fails once (transient), then the event is redelivered.
+	h.sender.transient[domain.ChannelSMS] = 1
+	_ = h.svc.NotifyOrderCancelled(ctx, "o-1", "alice", "saga timeout")
+	_ = h.svc.NotifyOrderCancelled(ctx, "o-1", "alice", "saga timeout")
+	// A repeat of a fully delivered event attempts nothing.
+	_ = h.svc.NotifyOrderCancelled(ctx, "o-1", "alice", "saga timeout")
+
+	// Another order whose SMS is permanently undeliverable.
+	h.sender.permanent[domain.ChannelSMS] = true
+	_ = h.svc.NotifyOrderCancelled(ctx, "o-2", "bob", "saga timeout")
+
+	want := []string{"email/sent", "sms/retry", "sms/sent", "email/sent", "sms/failed"}
+	if !reflect.DeepEqual(m.deliveries, want) {
+		t.Fatalf("deliveries = %v\nwant       = %v (a repeated event must not add attempts)", m.deliveries, want)
+	}
+}
+
 func TestInvalidEventsAreRejectedBeforeAnythingIsRecorded(t *testing.T) {
 	h := setup()
 

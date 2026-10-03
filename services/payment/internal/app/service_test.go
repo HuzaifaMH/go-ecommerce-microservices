@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/domain"
 )
@@ -241,6 +242,74 @@ func TestChargeRejectsInvalidCommandsBeforeAnyWork(t *testing.T) {
 	}
 	if prov.calls != 0 || len(ev.log) != 0 {
 		t.Errorf("no provider call or event expected (calls=%d events=%v)", prov.calls, ev.log)
+	}
+}
+
+type fakeMetrics struct {
+	charges   []string
+	providers []string // "<outcome>"
+}
+
+func (m *fakeMetrics) Charge(outcome string) { m.charges = append(m.charges, outcome) }
+func (m *fakeMetrics) ProviderCall(outcome string, took time.Duration) {
+	if took < 0 {
+		panic("negative duration")
+	}
+	m.providers = append(m.providers, outcome)
+}
+
+func TestMetricsDistinguishPaymentOutcomesFromProviderOutcomes(t *testing.T) {
+	prov := &fakeProvider{ref: "r"}
+	svc, repo, _ := setup(prov)
+	m := &fakeMetrics{}
+	svc.WithMetrics(m)
+	ctx := context.Background()
+
+	_ = svc.Charge(ctx, "o-1", "c-1", usd(100)) // succeeded
+	_ = svc.Charge(ctx, "o-1", "c-1", usd(100)) // same order again: duplicate, the provider is not called
+
+	prov.err = &domain.DeclinedError{Reason: "declined"}
+	_ = svc.Charge(ctx, "o-2", "c-1", usd(100)) // declined: a failed payment
+
+	prov.err = errors.New("provider timeout")
+	if err := svc.Charge(ctx, "o-3", "c-1", usd(100)); err == nil { // outage: retried, no payment outcome yet
+		t.Fatal("expected an error")
+	}
+
+	if want := []string{"succeeded", "duplicate", "failed"}; !reflect.DeepEqual(m.charges, want) {
+		t.Errorf("charges = %v, want %v (an outage is not a payment outcome)", m.charges, want)
+	}
+	if want := []string{"succeeded", "declined", "error"}; !reflect.DeepEqual(m.providers, want) {
+		t.Errorf("provider calls = %v, want %v (the duplicate must not reach the provider)", m.providers, want)
+	}
+
+	// A failure while storing rolls back and counts no payment, though the provider was reached.
+	m.charges, m.providers = nil, nil
+	prov.err = nil
+	repo.failCreate = errors.New("disk full")
+	if err := svc.Charge(ctx, "o-4", "c-1", usd(100)); err == nil {
+		t.Fatal("expected an error")
+	}
+	if len(m.charges) != 0 || !reflect.DeepEqual(m.providers, []string{"succeeded"}) {
+		t.Errorf("charges = %v, providers = %v", m.charges, m.providers)
+	}
+}
+
+func TestAConcurrentWinnerIsCountedAsADuplicate(t *testing.T) {
+	prov := &fakeProvider{ref: "mine"}
+	svc, repo, _ := setup(prov)
+	m := &fakeMetrics{}
+	svc.WithMetrics(m)
+
+	repo.beforeWrite = func() {
+		repo.beforeWrite = nil
+		repo.payments["o-1"] = domain.Payment{ID: "pay-other", OrderID: "o-1", CustomerID: "c-1", Amount: usd(100), Status: domain.StatusSucceeded}
+	}
+	if err := svc.Charge(context.Background(), "o-1", "c-1", usd(100)); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(m.charges, []string{"duplicate"}) {
+		t.Fatalf("charges = %v, want [duplicate]: this attempt lost the race, so it must not count as a second payment", m.charges)
 	}
 }
 

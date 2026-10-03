@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/order/internal/domain"
 )
 
@@ -85,6 +86,7 @@ type Service struct {
 	log      *slog.Logger
 	newID    func() string
 	now      func() time.Time
+	metrics  Metrics
 }
 
 // Deps are the collaborators of a Service.
@@ -99,10 +101,53 @@ type Deps struct {
 	Now      func() time.Time
 }
 
+// Metrics records business outcomes for monitoring. Implementations must be
+// cheap and must not fail.
+type Metrics interface {
+	// OrderCreated is called once for each new order (not for idempotent repeats).
+	OrderCreated()
+	// OrderFinished is called once when an order reaches a final state; o is the final order.
+	OrderFinished(o domain.Order)
+	// RefundRequired is called when a payment succeeded for an order that was already cancelled.
+	RefundRequired()
+}
+
+type noMetrics struct{}
+
+func (noMetrics) OrderCreated()              {}
+func (noMetrics) OrderFinished(domain.Order) {}
+func (noMetrics) RefundRequired()            {}
+
+// effects are the results of a step worth counting. They are recorded only
+// after the transaction has committed: a step that is rolled back and retried
+// must not be counted twice.
+type effects struct {
+	finished []domain.Order
+	refund   bool
+}
+
+func (s *Service) record(e effects) {
+	for _, o := range e.finished {
+		s.metrics.OrderFinished(o)
+	}
+	if e.refund {
+		s.metrics.RefundRequired()
+	}
+}
+
+// WithMetrics sets where business metrics go. By default they are discarded.
+func (s *Service) WithMetrics(m Metrics) *Service {
+	if m == nil {
+		m = noMetrics{}
+	}
+	s.metrics = m
+	return s
+}
+
 // NewService wires the use cases to their ports.
 func NewService(d Deps) *Service {
 	return &Service{catalog: d.Catalog, repo: d.Repo, tx: d.Tx, commands: d.Commands, events: d.Events,
-		log: d.Log, newID: d.NewID, now: d.Now}
+		log: d.Log, newID: d.NewID, now: d.Now, metrics: noMetrics{}}
 }
 
 // CreateOrder accepts an order and starts the saga by asking inventory to
@@ -142,9 +187,14 @@ func (s *Service) CreateOrder(ctx context.Context, customerID, idempotencyKey st
 	if err != nil {
 		return domain.Order{}, err
 	}
+	observability.SetSpanAttrs(ctx, "order.id", order.ID) // lets a trace be found by order ID
 
-	var result domain.Order
+	var (
+		result domain.Order
+		isNew  bool
+	)
 	err = s.tx.InTx(ctx, func(ctx context.Context) error {
+		isNew = false
 		stored, created, err := s.repo.Create(ctx, order)
 		if err != nil {
 			return fmt.Errorf("create order: %w", err)
@@ -154,8 +204,12 @@ func (s *Service) CreateOrder(ctx context.Context, customerID, idempotencyKey st
 			return err
 		}
 		result = stored
+		isNew = true
 		return s.commands.ReserveStock(ctx, stored.ID, stored.Lines())
 	})
+	if err == nil && isNew {
+		s.metrics.OrderCreated()
+	}
 	return result, err
 }
 
@@ -171,11 +225,16 @@ func sameOrConflict(o domain.Order, customerID string, lines []domain.Line) (dom
 // order cannot be cancelled (domain.ErrCannotCancel). Cancelling an order that
 // is already cancelled returns it unchanged.
 func (s *Service) CancelOrder(ctx context.Context, id, reason string) (domain.Order, error) {
+	observability.SetSpanAttrs(ctx, "order.id", id)
 	if reason == "" {
 		reason = "cancelled by customer"
 	}
-	var result domain.Order
+	var (
+		result     domain.Order
+		cancelling bool
+	)
 	err := s.tx.InTx(ctx, func(ctx context.Context) error {
+		cancelling = false
 		o, err := s.repo.GetForUpdate(ctx, id)
 		if err != nil {
 			return err
@@ -185,8 +244,12 @@ func (s *Service) CancelOrder(ctx context.Context, id, reason string) (domain.Or
 			return nil
 		}
 		result, err = s.cancel(ctx, o, reason)
+		cancelling = err == nil
 		return err
 	})
+	if err == nil && cancelling {
+		s.metrics.OrderFinished(result)
+	}
 	return result, err
 }
 
@@ -210,15 +273,24 @@ func (s *Service) cancel(ctx context.Context, o domain.Order, reason string) (do
 	return cancelled, nil
 }
 
-// react runs one saga step on a locked order inside a transaction.
-func (s *Service) react(ctx context.Context, orderID string, step func(ctx context.Context, o domain.Order) error) error {
-	return s.tx.InTx(ctx, func(ctx context.Context) error {
+// react runs one saga step on a locked order inside a transaction. The
+// step's effects are recorded as metrics once the transaction has committed.
+func (s *Service) react(ctx context.Context, orderID string, step func(ctx context.Context, o domain.Order) (effects, error)) error {
+	observability.SetSpanAttrs(ctx, "order.id", orderID)
+	var e effects
+	err := s.tx.InTx(ctx, func(ctx context.Context) error {
+		e = effects{}
 		o, err := s.repo.GetForUpdate(ctx, orderID)
 		if err != nil {
 			return err
 		}
-		return step(ctx, o)
+		e, err = step(ctx, o)
+		return err
 	})
+	if err == nil {
+		s.record(e)
+	}
+	return err
 }
 
 // HandleStockReserved is the saga's reaction to inventory reserving stock:
@@ -226,22 +298,22 @@ func (s *Service) react(ctx context.Context, orderID string, step func(ctx conte
 // order is released again, otherwise that stock would stay locked forever.
 // Duplicates are ignored.
 func (s *Service) HandleStockReserved(ctx context.Context, orderID string) error {
-	return s.react(ctx, orderID, func(ctx context.Context, o domain.Order) error {
+	return s.react(ctx, orderID, func(ctx context.Context, o domain.Order) (effects, error) {
 		switch o.Status {
 		case domain.StatusPending:
 			next, err := o.StockReserved(s.now())
 			if err != nil {
-				return err
+				return effects{}, err
 			}
 			if err := s.repo.Save(ctx, next); err != nil {
-				return fmt.Errorf("save order: %w", err)
+				return effects{}, fmt.Errorf("save order: %w", err)
 			}
-			return s.commands.ChargePayment(ctx, next.ID, next.CustomerID, next.Total)
+			return effects{}, s.commands.ChargePayment(ctx, next.ID, next.CustomerID, next.Total)
 		case domain.StatusCancelled:
-			s.log.Warn("stock reserved for a cancelled order; releasing it", "order_id", o.ID)
-			return s.commands.ReleaseStock(ctx, o.ID)
+			s.log.WarnContext(ctx, "stock reserved for a cancelled order; releasing it", "order_id", o.ID)
+			return effects{}, s.commands.ReleaseStock(ctx, o.ID)
 		default:
-			return nil // duplicate
+			return effects{}, nil // duplicate
 		}
 	})
 }
@@ -249,18 +321,18 @@ func (s *Service) HandleStockReserved(ctx context.Context, orderID string) error
 // HandleStockRejected cancels a pending order whose stock could not be
 // reserved. Nothing was reserved, so there is nothing to release.
 func (s *Service) HandleStockRejected(ctx context.Context, orderID, reason string) error {
-	return s.react(ctx, orderID, func(ctx context.Context, o domain.Order) error {
+	return s.react(ctx, orderID, func(ctx context.Context, o domain.Order) (effects, error) {
 		if o.Status != domain.StatusPending {
-			return nil // duplicate, or the order was cancelled meanwhile
+			return effects{}, nil // duplicate, or the order was cancelled meanwhile
 		}
 		cancelled, err := o.Cancel("out of stock: "+reason, s.now())
 		if err != nil {
-			return err
+			return effects{}, err
 		}
 		if err := s.repo.Save(ctx, cancelled); err != nil {
-			return fmt.Errorf("save order: %w", err)
+			return effects{}, fmt.Errorf("save order: %w", err)
 		}
-		return s.events.OrderCancelled(ctx, cancelled)
+		return effects{finished: []domain.Order{cancelled}}, s.events.OrderCancelled(ctx, cancelled)
 	})
 }
 
@@ -268,30 +340,30 @@ func (s *Service) HandleStockRejected(ctx context.Context, orderID, reason strin
 // order was cancelled in the meantime the customer has been charged for
 // nothing: the order is flagged as needing a refund and an error is logged.
 func (s *Service) HandlePaymentSucceeded(ctx context.Context, orderID string) error {
-	return s.react(ctx, orderID, func(ctx context.Context, o domain.Order) error {
+	return s.react(ctx, orderID, func(ctx context.Context, o domain.Order) (effects, error) {
 		switch o.Status {
 		case domain.StatusStockReserved:
 			confirmed, err := o.Confirm(s.now())
 			if err != nil {
-				return err
+				return effects{}, err
 			}
 			if err := s.repo.Save(ctx, confirmed); err != nil {
-				return fmt.Errorf("save order: %w", err)
+				return effects{}, fmt.Errorf("save order: %w", err)
 			}
-			return s.events.OrderConfirmed(ctx, confirmed)
+			return effects{finished: []domain.Order{confirmed}}, s.events.OrderConfirmed(ctx, confirmed)
 		case domain.StatusCancelled:
 			if o.RefundRequired {
-				return nil // already flagged
+				return effects{}, nil // already flagged
 			}
-			s.log.Error("payment succeeded for a cancelled order; refund required", "order_id", o.ID)
+			s.log.ErrorContext(ctx, "payment succeeded for a cancelled order; refund required", "order_id", o.ID)
 			if err := s.repo.Save(ctx, o.MarkRefundRequired(s.now())); err != nil {
-				return fmt.Errorf("save order: %w", err)
+				return effects{}, fmt.Errorf("save order: %w", err)
 			}
-			return nil
+			return effects{refund: true}, nil
 		case domain.StatusConfirmed:
-			return nil // duplicate
+			return effects{}, nil // duplicate
 		default:
-			return fmt.Errorf("%w: payment succeeded while %s", domain.ErrInvalidTransition, o.Status)
+			return effects{}, fmt.Errorf("%w: payment succeeded while %s", domain.ErrInvalidTransition, o.Status)
 		}
 	})
 }
@@ -299,15 +371,18 @@ func (s *Service) HandlePaymentSucceeded(ctx context.Context, orderID string) er
 // HandlePaymentFailed rolls back an order whose payment was declined: it is
 // cancelled, its stock released, and the cancellation announced.
 func (s *Service) HandlePaymentFailed(ctx context.Context, orderID, reason string) error {
-	return s.react(ctx, orderID, func(ctx context.Context, o domain.Order) error {
+	return s.react(ctx, orderID, func(ctx context.Context, o domain.Order) (effects, error) {
 		switch o.Status {
 		case domain.StatusStockReserved:
-			_, err := s.cancel(ctx, o, "payment failed: "+reason)
-			return err
+			cancelled, err := s.cancel(ctx, o, "payment failed: "+reason)
+			if err != nil {
+				return effects{}, err
+			}
+			return effects{finished: []domain.Order{cancelled}}, nil
 		case domain.StatusCancelled, domain.StatusConfirmed:
-			return nil // duplicate or already resolved
+			return effects{}, nil // duplicate or already resolved
 		default:
-			return fmt.Errorf("%w: payment failed while %s", domain.ErrInvalidTransition, o.Status)
+			return effects{}, fmt.Errorf("%w: payment failed while %s", domain.ErrInvalidTransition, o.Status)
 		}
 	})
 }
@@ -317,25 +392,28 @@ func (s *Service) HandlePaymentFailed(ctx context.Context, orderID, reason strin
 // example a command that exhausted its redeliveries) leaving an order stuck.
 // It returns the number of orders cancelled.
 func (s *Service) ExpireStale(ctx context.Context, timeout time.Duration, limit int) (int, error) {
-	var n int
+	var expired []domain.Order
 	err := s.tx.InTx(ctx, func(ctx context.Context) error {
+		expired = nil
 		stale, err := s.repo.LockStale(ctx, s.now().Add(-timeout), limit)
 		if err != nil {
 			return fmt.Errorf("find stale orders: %w", err)
 		}
 		for _, o := range stale {
-			s.log.Warn("cancelling order that timed out", "order_id", o.ID, "status", o.Status)
-			if _, err := s.cancel(ctx, o, "saga timeout"); err != nil {
+			s.log.WarnContext(ctx, "cancelling order that timed out", "order_id", o.ID, "status", o.Status)
+			cancelled, err := s.cancel(ctx, o, "saga timeout")
+			if err != nil {
 				return err
 			}
+			expired = append(expired, cancelled)
 		}
-		n = len(stale)
 		return nil
 	})
 	if err != nil {
 		return 0, err
 	}
-	return n, nil
+	s.record(effects{finished: expired})
+	return len(expired), nil
 }
 
 // RunSweeper calls ExpireStale every interval until ctx is cancelled. It is

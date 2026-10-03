@@ -223,6 +223,36 @@ func TestConcurrentRelaysNeverPublishARowTwice(t *testing.T) {
 	}
 }
 
+func TestBacklogCountsUnpublishedMessagesAndTheAgeOfTheOldest(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	if n, age, err := s.Backlog(ctx); err != nil || n != 0 || age != 0 {
+		t.Fatalf("empty outbox: %d, %v, %v; want 0, 0", n, age, err)
+	}
+
+	enqueue(t, s, "a", "b", "c")
+	time.Sleep(50 * time.Millisecond)
+	n, age, err := s.Backlog(ctx)
+	if err != nil || n != 3 || age < 50*time.Millisecond || age > time.Minute {
+		t.Fatalf("after enqueue: %d, %v, %v; want 3 messages, the oldest at least 50ms old", n, age, err)
+	}
+
+	if _, err := s.Dispatch(ctx, 2, func(context.Context, outbox.Record) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if n, _, _ := s.Backlog(ctx); n != 1 {
+		t.Fatalf("after publishing two: %d pending, want 1", n)
+	}
+
+	if _, err := s.Dispatch(ctx, 10, func(context.Context, outbox.Record) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if n, age, _ := s.Backlog(ctx); n != 0 || age != 0 {
+		t.Fatalf("after publishing everything: %d, %v; want 0, 0", n, age)
+	}
+}
+
 func TestOnceRunsFunctionOnlyOnce(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()

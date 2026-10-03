@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/domain"
 )
 
@@ -51,11 +53,50 @@ type Service struct {
 	tx       Transactor
 	events   Events
 	newID    func() string
+	metrics  Metrics
+}
+
+// Outcomes reported to Metrics.Charge.
+const (
+	OutcomeSucceeded = "succeeded" // the customer was charged
+	OutcomeFailed    = "failed"    // the provider declined
+	OutcomeDuplicate = "duplicate" // the order already had a payment; the stored outcome was re-sent
+)
+
+// Outcomes reported to Metrics.ProviderCall.
+const (
+	ProviderSucceeded = "succeeded"
+	ProviderDeclined  = "declined"
+	ProviderError     = "error" // an outage or timeout: the outcome is unknown and the charge is retried
+)
+
+// Metrics records business outcomes for monitoring. Implementations must be
+// cheap and must not fail.
+type Metrics interface {
+	// Charge is called once per Charge command that committed.
+	Charge(outcome string)
+	// ProviderCall is called after every call to the payment provider, whatever
+	// its result, with how long it took.
+	ProviderCall(outcome string, took time.Duration)
+}
+
+type noMetrics struct{}
+
+func (noMetrics) Charge(string)                      {}
+func (noMetrics) ProviderCall(string, time.Duration) {}
+
+// WithMetrics sets where business metrics go. By default they are discarded.
+func (s *Service) WithMetrics(m Metrics) *Service {
+	if m == nil {
+		m = noMetrics{}
+	}
+	s.metrics = m
+	return s
 }
 
 // NewService wires the use cases to their ports. newID generates payment IDs.
 func NewService(provider Provider, repo Repository, tx Transactor, events Events, newID func() string) *Service {
-	return &Service{provider: provider, repo: repo, tx: tx, events: events, newID: newID}
+	return &Service{provider: provider, repo: repo, tx: tx, events: events, newID: newID, metrics: noMetrics{}}
 }
 
 // Charge charges the customer for an order and publishes PaymentSucceeded or
@@ -75,6 +116,7 @@ func NewService(provider Provider, repo Repository, tx Transactor, events Events
 // Errors wrapping domain.ErrInvalidPayment mean the command is malformed or
 // contradicts an earlier one for the same order; retrying cannot help.
 func (s *Service) Charge(ctx context.Context, orderID, customerID string, amount domain.Money) error {
+	observability.SetSpanAttrs(ctx, "order.id", orderID)
 	req, err := domain.NewChargeRequest(orderID, customerID, amount)
 	if err != nil {
 		return err
@@ -86,7 +128,11 @@ func (s *Service) Charge(ctx context.Context, orderID, customerID string, amount
 		if !existing.Matches(req) {
 			return fmt.Errorf("%w: order %s already has a payment for a different amount or customer", domain.ErrInvalidPayment, orderID)
 		}
-		return s.tx.InTx(ctx, func(ctx context.Context) error { return s.publish(ctx, existing) })
+		err := s.tx.InTx(ctx, func(ctx context.Context) error { return s.publish(ctx, existing) })
+		if err == nil {
+			s.metrics.Charge(OutcomeDuplicate)
+		}
+		return err
 	case !errors.Is(err, domain.ErrPaymentNotFound):
 		return fmt.Errorf("find payment: %w", err)
 	}
@@ -96,25 +142,43 @@ func (s *Service) Charge(ctx context.Context, orderID, customerID string, amount
 		return err
 	}
 
-	return s.tx.InTx(ctx, func(ctx context.Context) error {
+	var outcome string
+	err = s.tx.InTx(ctx, func(ctx context.Context) error {
 		stored, err := s.repo.Create(ctx, payment)
 		if err != nil {
 			return fmt.Errorf("store payment: %w", err)
 		}
+		switch {
+		case stored.ID != payment.ID: // another attempt stored its payment first
+			outcome = OutcomeDuplicate
+		case stored.Status == domain.StatusSucceeded:
+			outcome = OutcomeSucceeded
+		default:
+			outcome = OutcomeFailed
+		}
 		return s.publish(ctx, stored) // stored may be another attempt's payment: the first one wins
 	})
+	if err == nil {
+		s.metrics.Charge(outcome)
+	}
+	return err
 }
 
 func (s *Service) callProvider(ctx context.Context, req domain.ChargeRequest) (domain.Payment, error) {
+	start := time.Now()
 	ref, err := s.provider.Charge(ctx, req)
+	took := time.Since(start)
 
 	var declined *domain.DeclinedError
 	switch {
 	case errors.As(err, &declined):
+		s.metrics.ProviderCall(ProviderDeclined, took)
 		return domain.NewFailed(s.newID(), req, declined.Reason), nil
 	case err != nil:
+		s.metrics.ProviderCall(ProviderError, took)
 		return domain.Payment{}, fmt.Errorf("charge via provider: %w", err)
 	}
+	s.metrics.ProviderCall(ProviderSucceeded, took)
 	return domain.NewSucceeded(s.newID(), req, ref), nil
 }
 

@@ -144,3 +144,23 @@ func TestParseErrorsAreReportedTogether(t *testing.T) {
 		}
 	}
 }
+
+func TestMetricsGetTheirOwnInternalPort(t *testing.T) {
+	cfg, err := load(map[string]string{"DEV_AUTH": "true"})
+	if err != nil || cfg.MetricsAddr != ":9100" || cfg.MetricsAddr == cfg.HTTPAddr {
+		t.Fatalf("cfg = %+v, err = %v; metrics must default to a port other than the public one", cfg, err)
+	}
+	if cfg, err := load(map[string]string{"DEV_AUTH": "true", "METRICS_ADDR": "127.0.0.1:9200"}); err != nil || cfg.MetricsAddr != "127.0.0.1:9200" {
+		t.Fatalf("override: %+v %v", cfg, err)
+	}
+
+	// Serving metrics on the public port would expose them to the internet.
+	for name, env := range map[string]map[string]string{
+		"same as the public address": {"DEV_AUTH": "true", "HTTP_ADDR": ":8080", "METRICS_ADDR": ":8080"},
+		"same, custom port":          {"DEV_AUTH": "true", "HTTP_ADDR": ":3000", "METRICS_ADDR": ":3000"},
+	} {
+		if _, err := load(env); err == nil || !strings.Contains(err.Error(), "METRICS_ADDR") {
+			t.Errorf("%s: err = %v, want a METRICS_ADDR error", name, err)
+		}
+	}
+}

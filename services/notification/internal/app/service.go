@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/notification/internal/domain"
 )
 
@@ -47,18 +48,46 @@ type Sender interface {
 	Send(ctx context.Context, n domain.Notification) error
 }
 
+// Outcomes reported to Metrics.Delivery.
+const (
+	OutcomeSent   = "sent"   // delivered
+	OutcomeFailed = "failed" // permanently undeliverable; recorded and not retried
+	OutcomeRetry  = "retry"  // a transient failure; the event will be redelivered
+)
+
+// Metrics records business outcomes for monitoring. Implementations must be
+// cheap and must not fail.
+type Metrics interface {
+	// Delivery is called after every attempt to deliver a notification.
+	Delivery(channel domain.Channel, outcome string)
+}
+
+type noMetrics struct{}
+
+func (noMetrics) Delivery(domain.Channel, string) {}
+
 // Service holds the notification use cases.
 type Service struct {
-	repo   Repository
-	sender Sender
-	log    *slog.Logger
-	newID  func() string
-	now    func() time.Time
+	repo    Repository
+	sender  Sender
+	log     *slog.Logger
+	newID   func() string
+	now     func() time.Time
+	metrics Metrics
+}
+
+// WithMetrics sets where business metrics go. By default they are discarded.
+func (s *Service) WithMetrics(m Metrics) *Service {
+	if m == nil {
+		m = noMetrics{}
+	}
+	s.metrics = m
+	return s
 }
 
 // NewService wires the use cases to their ports.
 func NewService(repo Repository, sender Sender, log *slog.Logger, newID func() string, now func() time.Time) *Service {
-	return &Service{repo: repo, sender: sender, log: log, newID: newID, now: now}
+	return &Service{repo: repo, sender: sender, log: log, newID: newID, now: now, metrics: noMetrics{}}
 }
 
 // NotifyOrderConfirmed tells the customer their order is confirmed.
@@ -90,6 +119,9 @@ func (s *Service) NotifyOrderCancelled(ctx context.Context, orderID, customerID,
 // Delivery is at-least-once: if the process dies after a message was sent
 // but before it was marked sent, the redelivery sends it again.
 func (s *Service) deliver(ctx context.Context, ns []domain.Notification) error {
+	if len(ns) > 0 {
+		observability.SetSpanAttrs(ctx, "order.id", ns[0].OrderID)
+	}
 	stored, err := s.repo.Ensure(ctx, ns)
 	if err != nil {
 		return fmt.Errorf("record notifications: %w", err)
@@ -105,14 +137,17 @@ func (s *Service) deliver(ctx context.Context, ns []domain.Notification) error {
 		var undeliverable *domain.UndeliverableError
 		switch {
 		case errors.As(sendErr, &undeliverable):
-			s.log.Warn("notification undeliverable", "notification_id", n.ID, "order_id", n.OrderID,
+			s.metrics.Delivery(n.Channel, OutcomeFailed)
+			s.log.WarnContext(ctx, "notification undeliverable", "notification_id", n.ID, "order_id", n.OrderID,
 				"channel", n.Channel, "reason", undeliverable.Reason)
 			if err := s.repo.MarkFailed(ctx, n.ID, undeliverable.Reason, s.now()); err != nil {
 				errs = append(errs, fmt.Errorf("mark %s failed: %w", n.ID, err))
 			}
 		case sendErr != nil:
+			s.metrics.Delivery(n.Channel, OutcomeRetry)
 			errs = append(errs, fmt.Errorf("send %s %s for order %s: %w", n.Kind, n.Channel, n.OrderID, sendErr))
 		default:
+			s.metrics.Delivery(n.Channel, OutcomeSent)
 			if err := s.repo.MarkSent(ctx, n.ID, s.now()); err != nil {
 				errs = append(errs, fmt.Errorf("mark %s sent: %w", n.ID, err))
 			}

@@ -16,6 +16,7 @@ import (
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/health"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/logging"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/messaging"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/outbox/pgstore"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/platform"
@@ -23,6 +24,7 @@ import (
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/subjects"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/version"
 	grpcadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/grpc"
+	metricsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/metrics"
 	natsadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/nats"
 	pgadapter "github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/postgres"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/payment/internal/adapters/provider/simulated"
@@ -50,6 +52,16 @@ func run() error {
 
 	ctx := context.Background()
 
+	inst, err := observability.Start(ctx, config.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := inst.Close(5 * time.Second); err != nil {
+			log.Warn("flushing traces failed", "error", err)
+		}
+	}()
+
 	pool, err := platform.OpenPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -72,9 +84,10 @@ func run() error {
 	store := pgstore.New(pool)
 	repo := pgadapter.NewRepository(store)
 	provider := simulated.New(cfg.SimulatedMaxAmountMinor)
-	svc := app.NewService(provider, repo, repo, natsadapter.NewEvents(store), uuid.NewString)
+	svc := app.NewService(provider, repo, repo, natsadapter.NewEvents(store), uuid.NewString).
+		WithMetrics(metricsadapter.New(inst.Registry))
 
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(inst.ServerOptions()...)
 	paymentv1.RegisterPaymentServiceServer(grpcSrv, grpcadapter.NewServer(svc, log))
 	reflection.Register(grpcSrv) // lets grpcurl discover the API in development
 
@@ -86,19 +99,22 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, checks.Routes(), cfg.ShutdownTimeout)
+	// /metrics shares the internal health port; it is never exposed publicly.
+	serveHTTP, err := platform.ServeHTTP(ctx, cfg.HTTPAddr, observability.WithMetrics(checks.Routes(), inst.Registry), cfg.ShutdownTimeout)
 	if err != nil {
 		return err
 	}
 
-	relay := outbox.NewRelay(store, messaging.NewJetStreamPublisher(js), log, outbox.Options{})
+	relay := outbox.NewRelay(store, messaging.NewJetStreamPublisher(js, messaging.WithObserver(inst.Messaging)), log, outbox.Options{})
+	gauges := observability.NewOutboxGauges(inst.Registry)
 	handlers := natsadapter.NewHandlers(svc)
 
-	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr)
+	log.Info("listening", "grpc", cfg.GRPCAddr, "http", cfg.HTTPAddr, "tracing", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "")
 	return runner.Run(ctx, log,
 		serveGRPC,
 		serveHTTP,
 		relay.Run,
-		func(ctx context.Context) error { return natsadapter.Consume(ctx, js, handlers, log) },
+		func(ctx context.Context) error { return gauges.Run(ctx, store, 5*time.Second, log) },
+		func(ctx context.Context) error { return natsadapter.Consume(ctx, js, handlers, log, inst.Messaging) },
 	)
 }

@@ -163,12 +163,30 @@ func (s *sent) OrderCancelled(_ context.Context, o domain.Order) error {
 	return nil
 }
 
+// fakeMetrics records what the service reported.
+type fakeMetrics struct {
+	created  int
+	finished []string // "<status>/<cause>"
+	refunds  int
+}
+
+func (m *fakeMetrics) OrderCreated() { m.created++ }
+func (m *fakeMetrics) OrderFinished(o domain.Order) {
+	if o.Status == domain.StatusCancelled {
+		m.finished = append(m.finished, "cancelled/"+domain.CancelCause(o.CancelReason))
+		return
+	}
+	m.finished = append(m.finished, string(o.Status))
+}
+func (m *fakeMetrics) RefundRequired() { m.refunds++ }
+
 type harness struct {
 	svc     *Service
 	repo    *fakeRepo
 	catalog *fakeCatalog
 	sent    *sent
 	clock   *time.Time
+	metrics *fakeMetrics
 }
 
 func setup() *harness {
@@ -186,7 +204,9 @@ func setup() *harness {
 		NewID: func() string { n++; return fmt.Sprintf("o-%d", n) },
 		Now:   func() time.Time { return clock },
 	})
-	return &harness{svc: svc, repo: repo, catalog: cat, sent: s, clock: &clock}
+	m := &fakeMetrics{}
+	svc.WithMetrics(m)
+	return &harness{svc: svc, repo: repo, catalog: cat, sent: s, clock: &clock, metrics: m}
 }
 
 var ctx = context.Background()
@@ -529,6 +549,118 @@ func TestListOrdersPaginatesNewestFirst(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, ids) {
 		t.Fatalf("paged = %v, want %v", got, ids)
+	}
+}
+
+func TestMetricsCountEachOutcomeExactlyOnce(t *testing.T) {
+	h := setup()
+
+	// Confirmed.
+	ok := h.create(t)
+	_ = h.svc.HandleStockReserved(ctx, ok.ID)
+	_ = h.svc.HandlePaymentSucceeded(ctx, ok.ID)
+
+	// Payment declined.
+	declined, _ := h.svc.CreateOrder(ctx, "c-1", "key-2", []domain.Line{{SKU: "A", Quantity: 1}})
+	_ = h.svc.HandleStockReserved(ctx, declined.ID)
+	_ = h.svc.HandlePaymentFailed(ctx, declined.ID, "card declined")
+
+	// Out of stock.
+	oos, _ := h.svc.CreateOrder(ctx, "c-1", "key-3", []domain.Line{{SKU: "A", Quantity: 1}})
+	_ = h.svc.HandleStockRejected(ctx, oos.ID, "insufficient stock")
+
+	// Cancelled by the customer.
+	mine, _ := h.svc.CreateOrder(ctx, "c-1", "key-4", []domain.Line{{SKU: "A", Quantity: 1}})
+	_, _ = h.svc.CancelOrder(ctx, mine.ID, "changed my mind")
+
+	// Timed out.
+	slow, _ := h.svc.CreateOrder(ctx, "c-1", "key-5", []domain.Line{{SKU: "A", Quantity: 1}})
+	*h.clock = h.clock.Add(time.Hour)
+	if n, err := h.svc.ExpireStale(ctx, time.Minute, 10); err != nil || n != 1 {
+		t.Fatalf("expired %d, %v; only the unfinished order should time out", n, err)
+	}
+	_ = slow
+
+	if h.metrics.created != 5 {
+		t.Errorf("created = %d, want 5", h.metrics.created)
+	}
+	want := []string{"confirmed", "cancelled/payment_failed", "cancelled/out_of_stock", "cancelled/customer", "cancelled/timeout"}
+	if !reflect.DeepEqual(h.metrics.finished, want) {
+		t.Fatalf("finished = %v\nwant     = %v", h.metrics.finished, want)
+	}
+}
+
+func TestRepeatsAndDuplicatesAreNotCounted(t *testing.T) {
+	h := setup()
+	o := h.create(t)
+	_ = h.svc.HandleStockReserved(ctx, o.ID)
+	_ = h.svc.HandlePaymentSucceeded(ctx, o.ID)
+
+	// The same request again, and every reply again.
+	_, _ = h.svc.CreateOrder(ctx, "c-1", "key-1", []domain.Line{{SKU: "A", Quantity: 2}, {SKU: "B", Quantity: 4}})
+	for range 3 {
+		_ = h.svc.HandleStockReserved(ctx, o.ID)
+		_ = h.svc.HandlePaymentSucceeded(ctx, o.ID)
+		_ = h.svc.HandlePaymentFailed(ctx, o.ID, "late")
+	}
+	_, _ = h.svc.CancelOrder(ctx, o.ID, "too late") // refused: confirmed
+
+	if h.metrics.created != 1 || len(h.metrics.finished) != 1 {
+		t.Fatalf("created = %d, finished = %v; repeats must not be counted", h.metrics.created, h.metrics.finished)
+	}
+
+	// Cancelling an already cancelled order is a repeat as well.
+	other, _ := h.svc.CreateOrder(ctx, "c-1", "key-2", []domain.Line{{SKU: "A", Quantity: 1}})
+	_, _ = h.svc.CancelOrder(ctx, other.ID, "first")
+	_, _ = h.svc.CancelOrder(ctx, other.ID, "second")
+	if len(h.metrics.finished) != 2 {
+		t.Fatalf("finished = %v, want the cancellation counted once", h.metrics.finished)
+	}
+}
+
+func TestARefundFlagIsCountedOnce(t *testing.T) {
+	h := setup()
+	o := h.create(t)
+	_ = h.svc.HandleStockReserved(ctx, o.ID)
+	_, _ = h.svc.CancelOrder(ctx, o.ID, "changed my mind")
+
+	for range 3 {
+		_ = h.svc.HandlePaymentSucceeded(ctx, o.ID)
+	}
+	if h.metrics.refunds != 1 {
+		t.Fatalf("refunds = %d, want 1: money owed is counted once however often the payment event arrives", h.metrics.refunds)
+	}
+}
+
+func TestMetricsAreNotRecordedForAStepThatRollsBack(t *testing.T) {
+	h := setup()
+	o := h.create(t)
+	_ = h.svc.HandleStockReserved(ctx, o.ID)
+	createdBefore := h.metrics.created
+
+	h.repo.failOn = "save" // the transaction fails and is rolled back
+	if err := h.svc.HandlePaymentSucceeded(ctx, o.ID); err == nil {
+		t.Fatal("expected the save to fail")
+	}
+	if _, err := h.svc.CancelOrder(ctx, o.ID, "x"); err == nil {
+		t.Fatal("expected the save to fail")
+	}
+	*h.clock = h.clock.Add(time.Hour)
+	if _, err := h.svc.ExpireStale(ctx, time.Minute, 10); err == nil {
+		t.Fatal("expected the save to fail")
+	}
+
+	if len(h.metrics.finished) != 0 || h.metrics.refunds != 0 || h.metrics.created != createdBefore {
+		t.Fatalf("finished = %v, refunds = %d: a rolled-back step must leave no trace in the metrics (the retry will count it)", h.metrics.finished, h.metrics.refunds)
+	}
+
+	// The retry after the database recovers is counted, once.
+	h.repo.failOn = ""
+	if err := h.svc.HandlePaymentSucceeded(ctx, o.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.metrics.finished) != 1 {
+		t.Fatalf("finished = %v, want exactly one after the retry", h.metrics.finished)
 	}
 }
 

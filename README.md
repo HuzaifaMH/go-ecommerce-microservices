@@ -92,6 +92,28 @@ docs/                 architecture and ADRs
 ```
 
 Service boundaries are enforced by the Go compiler (`internal/`); layer boundaries inside a service are enforced by `test/architecture`. See [ADR-0007](docs/adr/0007-service-code-structure.md).
+## Observability
+
+`make up` also starts the monitoring stack:
+
+| What | Where | Notes |
+|---|---|---|
+| **Jaeger** (traces) | http://localhost:16686 | One order is one trace across all services. Search service `api-gateway`, or the tag `order.id=<order id>` |
+| **Grafana** (dashboards) | http://localhost:3000 | Opens on the "E-Commerce overview" dashboard (no login needed to view) |
+| **Prometheus** (metrics, alerts) | http://localhost:9099 | Alert rules at `/alerts` |
+
+Every API response carries `X-Trace-Id` and `X-Request-Id`; paste the trace ID into Jaeger. Log lines written during a request carry the same `trace_id`.
+
+Try it:
+
+```bash
+TOKEN=$(curl -s -X POST localhost:8080/dev/token -H 'Content-Type: application/json' -d '{"subject":"alice"}' | jq -r .access_token)
+curl -si -X POST localhost:8080/v1/orders -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: demo-1' \
+     -H 'Content-Type: application/json' -d '{"items":[{"sku":"BOOK-GO-001","quantity":1}]}' | grep -i x-trace-id
+# open http://localhost:16686/trace/<that trace id>
+```
+
+Use a customer starting with `decline-` to see the rollback path (payment failed, stock released, order cancelled, customer notified) in a single trace. Alerts are unit-tested: `make rules-test`. Design and trade-offs: [ADR-0016](docs/adr/0016-observability.md).
 ## Roadmap
 
 - [x] Phase 0 — repository scaffold, CI, local infrastructure, ADRs
@@ -101,7 +123,7 @@ Service boundaries are enforced by the Go compiler (`internal/`); layer boundari
 - [x] Phase 4 — [order-service](services/order/README.md) and the saga
 - [x] Phase 5 — [notification-service](services/notification/README.md)
 - [x] Phase 6 — [api-gateway](services/gateway/README.md)
-- [ ] Phase 7 — observability (OpenTelemetry, Prometheus, Grafana, Jaeger)
+- [x] Phase 7 — observability (OpenTelemetry, Prometheus, Grafana, Jaeger); see [Observability](#observability)
 - [ ] Phase 8 — Kubernetes manifests and release pipeline
 - [ ] Phase 9 — Angular admin UI
 

@@ -66,6 +66,10 @@ lint: ## Run golangci-lint (must be installed)
 test: ## Run all tests with the race detector (integration tests need Docker)
 	$(GO) test -race -count=1 -cover ./...
 
+.PHONY: test-race-docker
+test-race-docker: ## Run the short tests under the race detector in a Linux container (for machines without a C toolchain, e.g. Windows)
+	docker run --rm -v "$(CURDIR):/src" -v gomodcache:/go/pkg/mod -w /src -e GOFLAGS=-buildvcs=false golang:1.26 go test -race -short -count=1 ./...
+
 .PHONY: test-short
 test-short: ## Run fast tests only (skips Docker-based integration tests)
 	$(GO) test -short -count=1 ./...
@@ -79,8 +83,13 @@ e2e: ## Run end-to-end tests against the full stack (builds images, needs Docker
 	$(COMPOSE) up -d --build
 	$(GO) test -tags e2e -count=1 ./test/e2e/... ; status=$$?; $(COMPOSE) down -v; exit $$status
 
+.PHONY: rules-test
+rules-test: ## Check the Prometheus config and unit-test the alert rules (needs Docker)
+	docker run --rm -v "$(CURDIR)/deploy/prometheus:/etc/prometheus" --entrypoint promtool prom/prometheus:v2.55.1 check config /etc/prometheus/prometheus.yml
+	docker run --rm -v "$(CURDIR)/deploy/prometheus:/etc/prometheus" -w /etc/prometheus --entrypoint promtool prom/prometheus:v2.55.1 test rules rules_test.yml
+
 .PHONY: up
-up: ## Start local infrastructure (NATS JetStream, Postgres)
+up: ## Start the whole stack: infrastructure, services and monitoring
 	$(COMPOSE) up -d
 
 .PHONY: down

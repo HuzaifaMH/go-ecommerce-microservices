@@ -1,0 +1,193 @@
+# Unit tests for the alert rules: promtool feeds in synthetic series and checks
+# which alerts fire and which stay quiet.
+#   make rules-test
+rule_files:
+  - rules/ecommerce.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- availability ---
+  - interval: 1m
+    name: a service that stays down fires, a one-minute blip does not
+    input_series:
+      - series: 'up{service="order-service"}'
+        values: "1 1 0 0 0 0 0"
+      - series: 'up{service="payment-service"}'
+        values: "1 1 0 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ServiceDown
+        exp_alerts:
+          - exp_labels: { severity: critical, service: order-service }
+            exp_annotations:
+              summary: "order-service is down"
+              description: "Prometheus has not been able to scrape order-service for a minute. Check its container logs and /readyz."
+
+  # --- outbox ---
+  - interval: 1m
+    name: an outbox message waiting more than a minute for two minutes fires
+    input_series:
+      - series: 'outbox_oldest_pending_age_seconds{service="order-service"}'
+        values: "0 5 90 120 150 180"
+      - series: 'outbox_oldest_pending_age_seconds{service="payment-service"}'
+        values: "0 5 30 20 10 0"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: OutboxStuck
+        exp_alerts:
+          - exp_labels: { severity: critical, service: order-service }
+            exp_annotations:
+              summary: "order-service cannot publish its events"
+              description: "The oldest unpublished outbox message is 3m 0s old. Events are not reaching the broker, so orders will stall. Check NATS and the service's relay logs."
+      - eval_time: 3m # the wait has not lasted two minutes yet
+        alertname: OutboxStuck
+        exp_alerts: []
+
+  # --- saga ---
+  - interval: 1m
+    name: a saga timeout fires and a healthy system is silent
+    input_series:
+      - series: 'orders_finished_total{outcome="cancelled",reason="timeout"}'
+        values: "0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1"
+      - series: 'orders_finished_total{outcome="confirmed",reason="none"}'
+        values: "0+5x15"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: OrderSagaTimeouts
+        exp_alerts:
+          - exp_labels: { severity: critical, outcome: cancelled, reason: timeout }
+            exp_annotations:
+              summary: "Orders are timing out"
+              description: "1 order(s) were cancelled because inventory or payment never replied. A reply is being lost or a service is stuck: look at the traces of the cancelled orders."
+      - eval_time: 15m # the increase has left the 10 minute window
+        alertname: OrderSagaTimeouts
+        exp_alerts: []
+
+  - interval: 1m
+    name: a payment for a cancelled order needs a refund
+    input_series:
+      - series: "orders_refund_required_total"
+        values: "0 0 0 1 1 1"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RefundRequired
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "A customer was charged for a cancelled order"
+              description: "1 payment(s) succeeded for an order that was already cancelled. They must be refunded by hand; search the order-service logs for 'refund required'."
+
+  - interval: 1m
+    name: terminated messages are reported per consumer and subject
+    input_series:
+      - series: 'messaging_consumed_total{consumer="payment",subject="payment.cmd.charge",outcome="terminated"}'
+        values: "0 0 1 1 1"
+      - series: 'messaging_consumed_total{consumer="payment",subject="payment.cmd.charge",outcome="ack"}'
+        values: "0+10x4"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MessagesTerminated
+        exp_alerts:
+          - exp_labels: { severity: warning, consumer: payment, subject: payment.cmd.charge, outcome: terminated }
+            exp_annotations:
+              summary: "payment dropped payment.cmd.charge messages"
+              description: "Messages were rejected as permanently unprocessable (malformed, unknown order, contradictory state). They are not retried; check the payment logs for the reason."
+
+  # --- business ---
+  - interval: 1m
+    name: a high cancellation rate with real traffic fires
+    input_series:
+      - series: 'orders_finished_total{outcome="cancelled",reason="payment_failed"}'
+        values: "0+6x15"
+      - series: 'orders_finished_total{outcome="confirmed",reason="none"}'
+        values: "0+4x15"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: OrderCancellationRateHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "More than 30% of orders are being cancelled"
+              description: "60% of finished orders were cancelled over the last 5 minutes. Check the 'reason' label: payment_failed, out_of_stock or timeout point to different problems."
+
+  - interval: 1m
+    name: a high cancellation ratio with almost no traffic stays quiet
+    input_series:
+      # one cancelled order and nothing else: 100% cancelled, but only a trickle of traffic
+      - series: 'orders_finished_total{outcome="cancelled",reason="customer"}'
+        values: "0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: OrderCancellationRateHigh
+        exp_alerts: []
+
+  - interval: 1m
+    name: declines are not provider errors, however many there are
+    input_series:
+      - series: 'payment_provider_calls_total{outcome="error"}'
+        values: "0+3x15"
+      - series: 'payment_provider_calls_total{outcome="succeeded"}'
+        values: "0+5x15"
+      - series: 'payment_provider_calls_total{outcome="declined"}'
+        values: "0+50x15" # a flood of declines must not count as provider errors
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: PaymentProviderErrors
+        exp_alerts: [] # 3 errors out of 58 calls is about 5%: declines are working as intended
+
+  - interval: 1m
+    name: a provider that mostly errors fires
+    input_series:
+      - series: 'payment_provider_calls_total{outcome="error"}'
+        values: "0+8x15"
+      - series: 'payment_provider_calls_total{outcome="succeeded"}'
+        values: "0+2x15"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: PaymentProviderErrors
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "The payment provider is failing"
+              description: "80% of calls to the payment provider failed with an outage or timeout (declines are not counted). Orders are being retried and will start timing out."
+
+  # --- edge ---
+  - interval: 1m
+    name: gateway errors with almost no traffic stay quiet
+    input_series:
+      # a single failed request and nothing else: 100% errors, but not worth waking anyone for
+      - series: 'http_requests_total{method="POST",route="POST /v1/orders",status="500"}'
+        values: "0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: GatewayHighErrorRate
+        exp_alerts: []
+
+  - interval: 1m
+    name: gateway error rate below the threshold stays quiet
+    input_series:
+      - series: 'http_requests_total{method="POST",route="POST /v1/orders",status="500"}'
+        values: "0+6x15" # 6 of 300 per minute: 2%
+      - series: 'http_requests_total{method="POST",route="POST /v1/orders",status="202"}'
+        values: "0+294x15"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: GatewayHighErrorRate
+        exp_alerts: []
+
+  - interval: 1m
+    name: gateway 5xx rate above 5 percent fires
+    input_series:
+      - series: 'http_requests_total{method="POST",route="POST /v1/orders",status="500"}'
+        values: "0+60x15"
+      - series: 'http_requests_total{method="POST",route="POST /v1/orders",status="202"}'
+        values: "0+240x15"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: GatewayHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "The API is returning server errors"
+              description: "20% of requests over the last 5 minutes got a 5xx. Look at which route in the gateway dashboard, then at a failing trace."

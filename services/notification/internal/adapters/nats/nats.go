@@ -81,10 +81,11 @@ func permanent(err error) error {
 // unique (order, kind, channel) key before it is sent, so a redelivered event
 // finds what was already done. The inbox transaction would also stay open
 // while the sender is called.
-func Consume(ctx context.Context, js jetstream.JetStream, h *Handlers, log *slog.Logger) error {
+func Consume(ctx context.Context, js jetstream.JetStream, h *Handlers, log *slog.Logger, obs messaging.Observer) error {
 	return messaging.Consume(ctx, js, messaging.ConsumerConfig{
 		Stream:         subjects.OrderStream.Name,
 		Durable:        consumerName,
 		FilterSubjects: []string{subjects.OrderEvtConfirmed, subjects.OrderEvtCancelled},
+		Observer:       obs,
 	}, log, h.Handle)
 }

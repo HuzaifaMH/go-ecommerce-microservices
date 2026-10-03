@@ -30,6 +30,10 @@ type Config struct {
 	HTTPAddr        string
 	ShutdownTimeout time.Duration
 
+	// MetricsAddr is the internal address serving /metrics. It must differ from
+	// HTTPAddr: HTTPAddr is public, metrics must not be.
+	MetricsAddr string
+
 	// Backend services (gRPC).
 	OrderAddr        string
 	InventoryAddr    string
@@ -66,6 +70,7 @@ func LoadFrom(l *config.Loader) (Config, error) {
 	cfg := Config{
 		Log:              logging.ConfigFromEnv(l, ServiceName),
 		HTTPAddr:         l.String("HTTP_ADDR", ":8080"),
+		MetricsAddr:      l.String("METRICS_ADDR", ":9100"),
 		ShutdownTimeout:  l.Duration("SHUTDOWN_TIMEOUT", 15*time.Second),
 		OrderAddr:        l.String("ORDER_GRPC_ADDR", "localhost:9092"),
 		InventoryAddr:    l.String("INVENTORY_GRPC_ADDR", "localhost:9090"),
@@ -132,6 +137,9 @@ func (c *Config) validate() error {
 		if u, err := url.Parse(origin); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" {
 			add("CORS_ALLOWED_ORIGINS: %q is not an origin like https://admin.example", origin)
 		}
+	}
+	if c.MetricsAddr == "" || c.MetricsAddr == c.HTTPAddr {
+		add("METRICS_ADDR must be set and different from HTTP_ADDR: the public port must never serve /metrics")
 	}
 	if c.RateLimitRPS < 0 {
 		add("RATE_LIMIT_RPS must not be negative")

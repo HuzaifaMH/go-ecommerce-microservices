@@ -101,6 +101,18 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
+  rules:
+    name: Prometheus rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the Prometheus configuration and alert rules
+        run: docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus" --entrypoint promtool prom/prometheus:v2.55.1 check config /etc/prometheus/prometheus.yml
+      - name: Unit-test the alert rules
+        run: docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus" -w /etc/prometheus --entrypoint promtool prom/prometheus:v2.55.1 test rules rules_test.yml
+      - name: Grafana dashboards are valid JSON
+        run: jq empty deploy/grafana/dashboards/*.json
+
   e2e:
     name: End-to-end
     runs-on: ubuntu-latest

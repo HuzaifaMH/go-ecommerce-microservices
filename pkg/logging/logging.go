@@ -2,10 +2,13 @@
 package logging
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
+
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/config"
 )
@@ -30,6 +33,10 @@ func ConfigFromEnv(l *config.Loader, service string) Config {
 }
 
 // New returns a logger writing to w.
+//
+// Records logged with a context that carries a trace (log.InfoContext(ctx,
+// ...)) get trace_id and span_id attributes, which is what lets you jump from
+// a trace in the tracing UI to the log lines of that request, and back.
 func New(w io.Writer, c Config) (*slog.Logger, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(strings.ToLower(c.Level))); err != nil {
@@ -47,5 +54,23 @@ func New(w io.Writer, c Config) (*slog.Logger, error) {
 		return nil, fmt.Errorf("invalid log format %q (want json or text)", c.Format)
 	}
 
-	return slog.New(h).With("service", c.Service), nil
+	return slog.New(traceHandler{h}).With("service", c.Service), nil
+}
+
+// traceHandler adds the trace and span IDs of the record's context.
+type traceHandler struct{ slog.Handler }
+
+func (h traceHandler) Handle(ctx context.Context, r slog.Record) error {
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		r.AddAttrs(slog.String("trace_id", sc.TraceID().String()), slog.String("span_id", sc.SpanID().String()))
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h traceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return traceHandler{h.Handler.WithAttrs(attrs)}
+}
+
+func (h traceHandler) WithGroup(name string) slog.Handler {
+	return traceHandler{h.Handler.WithGroup(name)}
 }

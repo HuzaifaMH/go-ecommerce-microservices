@@ -19,3 +19,4 @@ Each record states the context, the decision, the alternatives considered, and t
 | 0013 | [How the order saga handles failure](0013-saga-failure-handling.md) |
 | 0014 | [Notification delivery is at-least-once, keyed by order, kind and channel](0014-notification-delivery-guarantees.md) |
 | 0015 | [How the gateway authenticates and protects the API](0015-gateway-edge-security.md) |
+| 0016 | [Observability: OpenTelemetry traces, Prometheus metrics, tested alerts](0016-observability.md) |
