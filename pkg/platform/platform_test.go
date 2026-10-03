@@ -49,8 +49,36 @@ func TestServeHTTPStopsOnCancel(t *testing.T) {
 	}
 }
 
-func TestOpenPostgresRejectsBadURL(t *testing.T) {
+func TestOpenPostgresRejectsBadURLImmediately(t *testing.T) {
+	start := time.Now()
 	if _, err := OpenPostgres(context.Background(), "not a url"); err == nil {
 		t.Fatal("expected error for an invalid connection string")
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("took %v: a malformed connection string must not be retried", time.Since(start))
+	}
+}
+
+func TestOpenPostgresKeepsTryingWhileTheDatabaseIsDownThenGivesUp(t *testing.T) {
+	// Nothing listens on this port.
+	lis, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := lis.Addr().String()
+	_ = lis.Close()
+
+	start := time.Now()
+	_, err = openPostgres(context.Background(), "postgres://u:p@"+addr+"/db?sslmode=disable&connect_timeout=1", 700*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error when the database never comes up")
+	}
+	if elapsed < 300*time.Millisecond {
+		t.Errorf("gave up after %v; it should keep trying until its wait is used up", elapsed)
+	}
+	if elapsed > 10*time.Second {
+		t.Errorf("took %v; it must stop waiting", elapsed)
 	}
 }

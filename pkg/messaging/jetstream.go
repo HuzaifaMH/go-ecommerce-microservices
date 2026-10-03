@@ -9,15 +9,28 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/retry"
 )
 
 // ErrMissingID is returned when publishing a message without an ID.
 var ErrMissingID = errors.New("message ID is required")
 
-// Connect opens a NATS connection and a JetStream context.
+// startupWait is how long Connect keeps trying while the broker is not up yet.
+const startupWait = 30 * time.Second
+
+// Connect opens a NATS connection and a JetStream context. If the broker is
+// not reachable yet it keeps trying for up to 30 seconds, so the order in which
+// containers start does not matter.
 func Connect(url, name string, opts ...nats.Option) (*nats.Conn, jetstream.JetStream, error) {
 	opts = append([]nats.Option{nats.Name(name), nats.MaxReconnects(-1)}, opts...)
-	nc, err := nats.Connect(url, opts...)
+
+	var nc *nats.Conn
+	err := retry.Do(context.Background(), startupWait, func(context.Context) error {
+		var err error
+		nc, err = nats.Connect(url, opts...)
+		return err
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to nats: %w", err)
 	}
