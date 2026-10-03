@@ -21,6 +21,8 @@ import (
 	orderv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/order/v1"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/health"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/logging"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/platform"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/runner"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/version"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/gateway/internal/api"
@@ -50,6 +52,16 @@ func run() error {
 
 	ctx := context.Background()
 
+	inst, err := observability.Start(ctx, config.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := inst.Close(5 * time.Second); err != nil {
+			log.Warn("flushing traces failed", "error", err)
+		}
+	}()
+
 	keys, devIssuer, err := keySource(cfg, log)
 	if err != nil {
 		return err
@@ -60,18 +72,19 @@ func run() error {
 	}
 
 	// Backend connections. They connect lazily, so the gateway starts even when
-	// a backend is not up yet; readiness reports the truth.
-	orderConn, err := clients.Dial(cfg.OrderAddr, cfg.BackendTimeout)
+	// a backend is not up yet; readiness reports the truth. Every call is traced
+	// (the trace continues into the service) and measured.
+	orderConn, err := clients.Dial(cfg.OrderAddr, cfg.BackendTimeout, inst.DialOptions()...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = orderConn.Close() }()
-	inventoryConn, err := clients.Dial(cfg.InventoryAddr, cfg.BackendTimeout)
+	inventoryConn, err := clients.Dial(cfg.InventoryAddr, cfg.BackendTimeout, inst.DialOptions()...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = inventoryConn.Close() }()
-	notificationConn, err := clients.Dial(cfg.NotificationAddr, cfg.BackendTimeout)
+	notificationConn, err := clients.Dial(cfg.NotificationAddr, cfg.BackendTimeout, inst.DialOptions()...)
 	if err != nil {
 		return err
 	}
@@ -97,6 +110,7 @@ func run() error {
 		Health:        checks.Routes(),
 		CORSOrigins:   cfg.CORSOrigins,
 		MaxBodyBytes:  cfg.MaxBodyBytes,
+		Metrics:       api.NewHTTPMetrics(inst.Registry),
 		Log:           log,
 	})
 
@@ -113,13 +127,20 @@ func run() error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	tasks := []runner.Task{runner.HTTPServer(srv, lis, cfg.ShutdownTimeout)}
+	// Metrics are served on their own internal port: the main one is public.
+	serveMetrics, err := platform.ServeHTTP(ctx, cfg.MetricsAddr, observability.MetricsHandler(inst.Registry), cfg.ShutdownTimeout)
+	if err != nil {
+		return err
+	}
+
+	tasks := []runner.Task{runner.HTTPServer(srv, lis, cfg.ShutdownTimeout), serveMetrics}
 	if limiter != nil {
 		tasks = append(tasks, func(ctx context.Context) error { return limiter.Run(ctx, time.Minute) })
 	}
 
-	log.Info("listening", "http", cfg.HTTPAddr, "order", cfg.OrderAddr, "inventory", cfg.InventoryAddr,
-		"notification", cfg.NotificationAddr, "rate_limit_rps", cfg.RateLimitRPS)
+	log.Info("listening", "http", cfg.HTTPAddr, "metrics", cfg.MetricsAddr, "order", cfg.OrderAddr, "inventory", cfg.InventoryAddr,
+		"notification", cfg.NotificationAddr, "rate_limit_rps", cfg.RateLimitRPS,
+		"tracing", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "")
 	return runner.Run(ctx, log, tasks...)
 }
 

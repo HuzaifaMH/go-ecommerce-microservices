@@ -36,6 +36,9 @@ type Deps struct {
 	// MaxBodyBytes bounds request bodies. Defaults to DefaultMaxBodyBytes.
 	MaxBodyBytes int64
 
+	// Metrics records request metrics; nil disables them.
+	Metrics *HTTPMetrics
+
 	Log *slog.Logger
 }
 
@@ -50,8 +53,10 @@ type Handler struct {
 
 // NewHandler builds the HTTP handler: routes wrapped in the middleware chain.
 //
-// Outermost first: request ID, panic recovery, access log, security headers,
-// CORS, authentication (soft), rate limiting, body size limit, routes.
+// Outermost first: tracing, request ID, panic recovery, access log, metrics,
+// security headers, CORS, authentication (soft), rate limiting, body size
+// limit, routes. Metrics sit outside authentication and rate limiting so that
+// rejected requests are counted too.
 func NewHandler(d Deps) http.Handler {
 	if d.MaxBodyBytes == 0 {
 		d.MaxBodyBytes = DefaultMaxBodyBytes
@@ -90,9 +95,11 @@ func NewHandler(d Deps) http.Handler {
 	handler = authenticate(d.Verifier)(handler)
 	handler = cors(d.CORSOrigins)(handler)
 	handler = securityHeaders(handler)
+	handler = d.Metrics.middleware(mux)(handler)
 	handler = accessLog(d.Log)(handler)
 	handler = recoverer(d.Log)(handler)
 	handler = withRequestID(handler)
+	handler = traced(mux)(handler)
 	return handler
 }
 

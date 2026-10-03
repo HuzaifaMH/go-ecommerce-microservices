@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	orderv1 "github.com/HuzaifaMH/go-ecommerce-microservices/gen/ecommerce/order/v1"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/observability"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/services/gateway/internal/auth"
 )
 
@@ -50,6 +51,8 @@ func (h *Handler) createOrder(w http.ResponseWriter, r *http.Request, p auth.Pri
 		return
 	}
 
+	observability.SetSpanAttrs(r.Context(), "order.id", resp.GetOrder().GetId()) // find this trace by order ID
+
 	// 202: the order is accepted and being processed; poll it for the outcome.
 	w.Header().Set("Location", "/v1/orders/"+resp.GetOrder().GetId())
 	writeJSON(w, http.StatusAccepted, toOrder(resp.GetOrder()))
@@ -59,6 +62,7 @@ func (h *Handler) createOrder(w http.ResponseWriter, r *http.Request, p auth.Pri
 // people's orders look exactly like missing ones, so IDs cannot be probed. It
 // writes the error response itself and returns nil on failure.
 func (h *Handler) loadOwnedOrder(w http.ResponseWriter, r *http.Request, p auth.Principal, op string) *orderv1.Order {
+	observability.SetSpanAttrs(r.Context(), "order.id", r.PathValue("id"))
 	resp, err := h.orders.GetOrder(r.Context(), &orderv1.GetOrderRequest{Id: r.PathValue("id")})
 	if err != nil {
 		h.writeGRPCError(w, r, op, err)

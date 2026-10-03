@@ -115,6 +115,7 @@ type options struct {
 	corsOrigins []string
 	maxBody     int64
 	verifier    TokenVerifier
+	metrics     *HTTPMetrics
 }
 
 var created = time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
@@ -160,7 +161,7 @@ func newHarness(t *testing.T, o ...options) *harness {
 	deps := Deps{
 		Orders: h.orders, Inventory: h.inv, Notifications: h.notif,
 		Verifier: verifier, Limiter: opt.limiter, Health: health.New(time.Second).Routes(),
-		CORSOrigins: opt.corsOrigins, MaxBodyBytes: opt.maxBody,
+		CORSOrigins: opt.corsOrigins, MaxBodyBytes: opt.maxBody, Metrics: opt.metrics,
 		Log: slog.New(slog.NewTextHandler(h.logs, nil)),
 	}
 	if !opt.noDevToken {
