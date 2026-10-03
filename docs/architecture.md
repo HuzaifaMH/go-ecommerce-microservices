@@ -50,7 +50,7 @@ Each becomes a file in `docs/adr/` using Context / Decision / Alternatives / Con
 ### ADR-002 gRPC internally, REST at the edge
 - **gRPC for service to service:** a typed contract in protobuf, generated clients and servers, HTTP/2, deadlines and cancellation propagation, streaming, backward-compatibility checks with `buf breaking`.
 - **REST/JSON for external clients:** browsers, curl and third parties expect it. The gateway keeps that concern out of the services.
-- **Alternatives:** REST everywhere (loses the contract and generated code), GraphQL (unneeded complexity here), grpc-gateway (considered; a hand-written chi gateway is simpler to read and to test).
+- **Alternatives:** REST everywhere (loses the contract and generated code), GraphQL (unneeded complexity here), grpc-gateway (considered; a hand-written gateway on the standard library's net/http router is simpler to read and to test).
 - **Cost:** two API styles to maintain. The gateway is thin to keep that small.
 
 ### ADR-003 NATS JetStream vs Kafka vs RabbitMQ

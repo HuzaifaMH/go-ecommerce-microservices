@@ -65,3 +65,31 @@ func TestRequiredStringPresent(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestFloat(t *testing.T) {
+	l := FromMap(map[string]string{"RATE": "2.5", "BAD": "fast"})
+	if got := l.Float("RATE", 1); got != 2.5 {
+		t.Errorf("Float = %v", got)
+	}
+	if got := l.Float("MISSING", 7.5); got != 7.5 {
+		t.Errorf("Float default = %v", got)
+	}
+	l.Float("BAD", 1)
+	if err := l.Err(); err == nil || !strings.Contains(err.Error(), "BAD") {
+		t.Fatalf("err = %v, want it to mention BAD", err)
+	}
+}
+
+func TestStrings(t *testing.T) {
+	l := FromMap(map[string]string{
+		"ORIGINS": " https://a.example , https://b.example,, ",
+		"EMPTY":   "",
+	})
+	got := l.Strings("ORIGINS")
+	if len(got) != 2 || got[0] != "https://a.example" || got[1] != "https://b.example" {
+		t.Errorf("Strings = %q", got)
+	}
+	if l.Strings("EMPTY") != nil || l.Strings("MISSING") != nil {
+		t.Error("unset or empty must give nil")
+	}
+}
