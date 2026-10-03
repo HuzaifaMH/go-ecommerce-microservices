@@ -17,21 +17,9 @@ An event-driven e-commerce backend built in Go. Order, inventory, payment and no
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    Client([Client]) -- REST/JSON --> GW[api-gateway]
-    GW -- gRPC --> ORD[order-service]
-    GW -- gRPC --> INV[inventory-service]
-    ORD <-- "commands / replies<br/>(JetStream)" --> INV
-    ORD <-- "commands / replies<br/>(JetStream)" --> PAY[payment-service]
-    ORD -- "order events<br/>(JetStream)" --> NOT[notification-service]
-    PAY -- "payment events<br/>(JetStream)" --> NOT
-    ORD --- ODB[(orders DB)]
-    INV --- IDB[(inventory DB)]
-    PAY --- PDB[(payments DB)]
-    NOT --- NDB[(notifications DB)]
-```
+![Architecture](docs/images/architecture.svg)
 
+Solid arrows are synchronous gRPC calls. Dashed arrows are asynchronous messages: a service writes the message to its own database in the same transaction as the state change (outbox), a relay publishes it to JetStream, and consumers de-duplicate on the message ID (inbox). Each service owns its database; no service reads another's tables.
 | Service | Responsibility |
 |---|---|
 | `api-gateway` | Public REST edge, JWT auth, rate limiting, translates to gRPC |
