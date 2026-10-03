@@ -23,7 +23,7 @@ One repository, one Go module, one directory per service:
 │       ├── migrations/        # SQL (goose)
 │       └── Dockerfile
 ├── pkg/                       # shared, service-agnostic libraries
-├── deploy/                    # Compose, Kubernetes
+├── deploy/                    # Compose, Dockerfile, monitoring config
 ├── test/                      # architecture and e2e tests
 ├── scripts/  tools/  docs/
 ```

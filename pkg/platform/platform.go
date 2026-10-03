@@ -22,16 +22,28 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/health"
+	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/retry"
 	"github.com/HuzaifaMH/go-ecommerce-microservices/pkg/runner"
 )
 
-// OpenPostgres connects to PostgreSQL and verifies the connection.
+// StartupWait is how long a service waits for a dependency that is not up yet
+// before giving up. It covers a database still initialising or a broker still
+// booting, so the order in which containers start does not matter.
+const StartupWait = 30 * time.Second
+
+// OpenPostgres connects to PostgreSQL and verifies the connection. If the
+// database is not accepting connections yet it keeps trying for StartupWait;
+// a malformed connection string fails immediately.
 func OpenPostgres(ctx context.Context, url string) (*pgxpool.Pool, error) {
+	return openPostgres(ctx, url, StartupWait)
+}
+
+func openPostgres(ctx context.Context, url string, wait time.Duration) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("connect to postgres: %w", err)
+		return nil, fmt.Errorf("connect to postgres: %w", err) // bad configuration: retrying cannot help
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := retry.Do(ctx, wait, pool.Ping); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}

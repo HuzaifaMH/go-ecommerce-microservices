@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 460" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="960" height="460" fill="#ffffff"/>
+  <text x="20" y="28" font-size="16" font-weight="600" fill="#0f172a">Level 4: Deployment (docker compose up)</text>
+  <text x="20" y="48" font-size="12" fill="#475569">One Docker network. Ports are published for local development; in a real deployment only the gateway would be public.</text>
+
+  <rect x="20" y="64" width="920" height="380" rx="14" fill="#f8fafc" stroke="#64748b" stroke-dasharray="5 4"/>
+  <text x="36" y="86" font-size="12" font-weight="600" fill="#475569">DOCKER HOST · compose network</text>
+
+  <g text-anchor="middle" font-size="13" fill="#0f172a">
+    <!-- apps -->
+    <rect x="40" y="104" width="170" height="64" rx="8" fill="#e0f2fe" stroke="#0284c7"/><text x="125" y="130" font-weight="600">gateway</text><text x="125" y="150" font-size="11" fill="#475569">HTTP :8080 · metrics :9100</text>
+    <rect x="240" y="104" width="170" height="64" rx="8" fill="#dcfce7" stroke="#16a34a"/><text x="325" y="130" font-weight="600">order</text><text x="325" y="150" font-size="11" fill="#475569">gRPC · health · metrics</text>
+    <rect x="440" y="104" width="170" height="64" rx="8" fill="#dcfce7" stroke="#16a34a"/><text x="525" y="130" font-weight="600">inventory</text><text x="525" y="150" font-size="11" fill="#475569">gRPC · health · metrics</text>
+    <rect x="640" y="104" width="130" height="64" rx="8" fill="#dcfce7" stroke="#16a34a"/><text x="705" y="130" font-weight="600">payment</text><text x="705" y="150" font-size="11" fill="#475569">gRPC · metrics</text>
+    <rect x="790" y="104" width="130" height="64" rx="8" fill="#dcfce7" stroke="#16a34a"/><text x="855" y="130" font-weight="600">notification</text><text x="855" y="150" font-size="11" fill="#475569">gRPC · metrics</text>
+
+    <!-- infra -->
+    <rect x="40" y="220" width="400" height="64" rx="8" fill="#cffafe" stroke="#0e7490"/><text x="240" y="246" font-weight="600">nats (JetStream, file storage)</text><text x="240" y="266" font-size="11" fill="#475569">:4222 client · streams survive restarts</text>
+    <rect x="470" y="220" width="450" height="64" rx="8" fill="#ede9fe" stroke="#7c3aed"/><text x="695" y="246" font-weight="600">postgres 16</text><text x="695" y="266" font-size="11" fill="#475569">one database and one role per service (init.sql)</text>
+
+    <!-- monitoring -->
+    <rect x="40" y="340" width="200" height="64" rx="8" fill="#fef3c7" stroke="#d97706"/><text x="140" y="366" font-weight="600">jaeger</text><text x="140" y="386" font-size="11" fill="#475569">UI :16686 · OTLP :4317</text>
+    <rect x="270" y="340" width="200" height="64" rx="8" fill="#fef3c7" stroke="#d97706"/><text x="370" y="366" font-weight="600">prometheus</text><text x="370" y="386" font-size="11" fill="#475569">host :9099 · scrapes every service</text>
+    <rect x="500" y="340" width="200" height="64" rx="8" fill="#fef3c7" stroke="#d97706"/><text x="600" y="366" font-weight="600">grafana</text><text x="600" y="386" font-size="11" fill="#475569">:3000 · provisioned dashboard</text>
+    <text x="810" y="372" font-size="12" fill="#475569">each service waits for its</text>
+    <text x="810" y="390" font-size="12" fill="#475569">dependencies (retry/backoff)</text>
+  </g>
+</svg>
