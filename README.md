@@ -9,7 +9,11 @@
 
 An event-driven e-commerce backend built in Go. Order, inventory, payment and notification services communicate over **gRPC** and **NATS JetStream**, using an **orchestrated saga**, the **transactional outbox** pattern and idempotent consumers.
 
-> **Status:** under active development. See the [roadmap](#roadmap).
+> **Status:** feature-complete [v0.1.0](CHANGELOG.md). Five services, 16 ADRs, 12 required CI checks, 26 end-to-end scenarios. See the [roadmap](#roadmap).
+
+![Grafana dashboard under load](docs/images/grafana-dashboard.png)
+
+*The bundled Grafana dashboard after a minute of mixed traffic: successful, declined, out-of-stock and customer-cancelled orders.*
 
 ## Architecture
 
@@ -43,6 +47,38 @@ flowchart LR
 3. On success the order becomes `CONFIRMED`. If payment fails, stock is released and the order is `CANCELLED`.
 4. Notification reacts to the resulting events.
 
+### Saga: happy path and rollback
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant G as api-gateway
+    participant O as order-service
+    participant I as inventory-service
+    participant P as payment-service
+    participant N as notification-service
+    C->>G: POST /v1/orders (JWT, Idempotency-Key)
+    G->>O: gRPC CreateOrder
+    O->>O: order PENDING + outbox row (one transaction)
+    O-->>I: inventory.cmd.reserve
+    I-->>O: inventory.evt.reserved
+    O-->>P: payment.cmd.charge
+    alt payment succeeds
+        P-->>O: payment.evt.succeeded
+        O->>O: CONFIRMED
+        O-->>N: order.evt.confirmed
+    else payment declined
+        P-->>O: payment.evt.failed
+        O-->>I: inventory.cmd.release (compensation)
+        O->>O: CANCELLED
+        O-->>N: order.evt.cancelled
+    end
+```
+
+One order is one distributed trace across all five services:
+
+![Jaeger trace of one order](docs/images/jaeger-trace.png)
 Full details: [docs/architecture.md](docs/architecture.md).
 
 ## Key design decisions
@@ -86,12 +122,13 @@ services/<service>/   One self-contained directory per service
   internal/adapters/    gRPC, JetStream, Postgres implementations
   migrations/           SQL migrations
 pkg/                  shared, service-agnostic libraries
-deploy/               Docker Compose, Kubernetes manifests
+deploy/               Docker Compose, Dockerfile, Prometheus and Grafana config
 test/                 architecture and end-to-end tests
 docs/                 architecture and ADRs
 ```
 
 Service boundaries are enforced by the Go compiler (`internal/`); layer boundaries inside a service are enforced by `test/architecture`. See [ADR-0007](docs/adr/0007-service-code-structure.md).
+
 ## Observability
 
 `make up` also starts the monitoring stack:
@@ -114,6 +151,7 @@ curl -si -X POST localhost:8080/v1/orders -H "Authorization: Bearer $TOKEN" -H '
 ```
 
 Use a customer starting with `decline-` to see the rollback path (payment failed, stock released, order cancelled, customer notified) in a single trace. Alerts are unit-tested: `make rules-test`. Design and trade-offs: [ADR-0016](docs/adr/0016-observability.md).
+
 ## Roadmap
 
 - [x] Phase 0 — repository scaffold, CI, local infrastructure, ADRs
@@ -124,8 +162,8 @@ Use a customer starting with `decline-` to see the rollback path (payment failed
 - [x] Phase 5 — [notification-service](services/notification/README.md)
 - [x] Phase 6 — [api-gateway](services/gateway/README.md)
 - [x] Phase 7 — observability (OpenTelemetry, Prometheus, Grafana, Jaeger); see [Observability](#observability)
-- [ ] Phase 8 — Kubernetes manifests and release pipeline
-- [ ] Phase 9 — Angular admin UI
+- [x] Release v0.1.0 — see the [changelog](CHANGELOG.md)
+- [ ] Not started: Kubernetes manifests, Angular admin UI
 
 ## License
 

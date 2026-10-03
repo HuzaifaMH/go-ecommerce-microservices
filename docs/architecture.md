@@ -56,7 +56,7 @@ Each becomes a file in `docs/adr/` using Context / Decision / Alternatives / Con
 ### ADR-003 NATS JetStream vs Kafka vs RabbitMQ
 - **Decision:** JetStream.
 - **Why:**
-  - One small Go binary, so it is trivial to run in Compose and Kubernetes.
+  - One small Go binary, so it is trivial to run in a container.
   - Subject-based routing and wildcards fit command and event subjects (`inventory.cmd.reserve`, `order.evt.confirmed`).
   - Durable pull consumers, explicit ack, redelivery, `MaxDeliver` and dead-letter handling via advisories.
   - Built-in publish de-duplication with `Nats-Msg-Id` (needed for the outbox).
@@ -101,7 +101,6 @@ OpenTelemetry traces and metrics with the trace context propagated through gRPC 
 | Environment | How | Purpose |
 |---|---|---|
 | **Local dev** | `docker compose up` brings up NATS, Postgres, all services, Prometheus, Grafana and Jaeger. `make` targets for everything else. | One command to try it |
-| **Local Kubernetes** | `kind` + Kustomize (base and overlays), health probes, resource limits, HPA on one service | Shows Kubernetes skills |
 | **CI** | GitHub Actions: lint (`golangci-lint`), `buf`, test with `-race`, build multi-stage distroless images, push to GHCR on tags | Shows automation |
 
 Images: multi-stage builds, `CGO_ENABLED=0`, distroless non-root, expected size around 15–25 MB per service.
@@ -121,10 +120,10 @@ Conventional Commits, branch protection, PR template, CODEOWNERS, `Makefile`, `.
 | 5 | notification-service |
 | 6 | api-gateway (REST, JWT, rate limit) |
 | 7 | Observability stack and dashboards |
-| 8 | Kubernetes manifests, full CI/CD, release |
+| 8 | Release v0.1.0 (Kubernetes manifests were deferred and are not part of this release) |
 | 9 | Angular admin UI (orders, stock, live order status) served behind the gateway; added after the backend is complete |
 
 ## 8. Decisions confirmed
 1. Angular UI is included, as Phase 9, after the backend is done.
-2. No AWS phase. Deployment targets are Docker Compose and Kubernetes (kind).
+2. No AWS phase. The deployment target is Docker Compose; Kubernetes manifests were deferred.
 3. License: MIT.
