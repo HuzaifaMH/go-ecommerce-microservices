@@ -95,7 +95,10 @@ internal/config/         environment configuration with strict validation
 | `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST` | `20`, `40` | Per-caller limit; `RATE_LIMIT_RPS=0` disables |
 | `CORS_ALLOWED_ORIGINS` | | Comma-separated origins (or `*`) |
 | `MAX_BODY_BYTES` | `1048576` | Largest accepted request body |
-| `HTTP_ADDR` | `:8080` | Listen address |
+| `HTTP_ADDR` | `:8080` | Listen address (public) |
+| `METRICS_ADDR` | `:9100` | Internal address serving `/metrics`; must differ from `HTTP_ADDR` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | | OTLP/gRPC endpoint for traces (e.g. `http://jaeger:4317`); unset disables export |
+| `OTEL_TRACES_SAMPLE_RATIO` | `1` | Fraction of new traces recorded |
 | `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown limit |
 | `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `debug\|info\|warn\|error`, `json\|text` |
 

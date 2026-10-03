@@ -57,6 +57,7 @@ migrations/                        goose SQL migrations (embedded in the binary)
 | `HTTP_ADDR` | `:8080` | `/healthz` and `/readyz` |
 | `SIMULATED_MAX_AMOUNT_MINOR` | `1000000` | Largest amount the simulated provider accepts |
 | `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown limit |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | | OTLP/gRPC endpoint for traces (e.g. `http://jaeger:4317`); unset disables export. `/metrics` is served on `HTTP_ADDR` |
 | `LOG_LEVEL` / `LOG_FORMAT` | `info` / `json` | `debug\|info\|warn\|error`, `json\|text` |
 
 ## Run and test
