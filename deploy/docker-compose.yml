@@ -1,5 +1,10 @@
 name: ecommerce
 
+# Every application service exports traces to Jaeger over OTLP/gRPC.
+# Unset this variable and tracing is switched off.
+x-otel: &otel
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+
 services:
   nats:
     image: nats:2.10-alpine
@@ -38,6 +43,7 @@ services:
       args:
         SERVICE: inventory
     environment:
+      <<: *otel
       DATABASE_URL: postgres://inventory:inventory@postgres:5432/inventory?sslmode=disable
       NATS_URL: nats://nats:4222
       SEED_DEMO_DATA: "true"
@@ -58,6 +64,7 @@ services:
       args:
         SERVICE: payment
     environment:
+      <<: *otel
       DATABASE_URL: postgres://payments:payments@postgres:5432/payments?sslmode=disable
       NATS_URL: nats://nats:4222
       LOG_FORMAT: text
@@ -77,6 +84,7 @@ services:
       args:
         SERVICE: order
     environment:
+      <<: *otel
       DATABASE_URL: postgres://orders:orders@postgres:5432/orders?sslmode=disable
       NATS_URL: nats://nats:4222
       INVENTORY_GRPC_ADDR: inventory:9090
@@ -99,6 +107,7 @@ services:
       args:
         SERVICE: notification
     environment:
+      <<: *otel
       DATABASE_URL: postgres://notifications:notifications@postgres:5432/notifications?sslmode=disable
       NATS_URL: nats://nats:4222
       LOG_FORMAT: text
@@ -118,6 +127,7 @@ services:
       args:
         SERVICE: gateway
     environment:
+      <<: *otel
       # Development only: the gateway mints its own tokens at POST /dev/token.
       # In any real deployment set JWT_ISSUER, JWT_AUDIENCE and JWT_JWKS_URL
       # (or JWT_PUBLIC_KEY_FILE) instead, and never DEV_AUTH.
@@ -129,6 +139,7 @@ services:
       LOG_FORMAT: text
     ports:
       - "8080:8080" # the public REST API
+      - "9100:9100" # internal /metrics (published for local development only; never expose it publicly)
     depends_on:
       order:
         condition: service_started
@@ -136,6 +147,43 @@ services:
         condition: service_started
       notification:
         condition: service_started
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      MEMORY_MAX_TRACES: "20000"
+    ports:
+      - "16686:16686" # UI
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+    ports:
+      - "9099:9090" # UI (9090 is the inventory service's gRPC port on the host)
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    environment:
+      # Local development: anyone can view the dashboards without logging in.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ecommerce.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - jaeger
 
 volumes:
   nats-data:

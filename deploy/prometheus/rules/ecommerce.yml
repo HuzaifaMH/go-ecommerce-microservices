@@ -1,0 +1,85 @@
+# Alert rules. Each one says what is wrong, why it matters, and where to look.
+# They are covered by unit tests in ../rules_test.yml (run `make rules-test`).
+groups:
+  - name: availability
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} is down"
+          description: "Prometheus has not been able to scrape {{ $labels.service }} for a minute. Check its container logs and /readyz."
+
+  - name: saga-and-messaging
+    rules:
+      - alert: OutboxStuck
+        expr: outbox_oldest_pending_age_seconds > 60
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} cannot publish its events"
+          description: "The oldest unpublished outbox message is {{ $value | humanizeDuration }} old. Events are not reaching the broker, so orders will stall. Check NATS and the service's relay logs."
+
+      - alert: OrderSagaTimeouts
+        expr: increase(orders_finished_total{reason="timeout"}[10m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Orders are timing out"
+          description: "{{ $value | printf \"%.0f\" }} order(s) were cancelled because inventory or payment never replied. A reply is being lost or a service is stuck: look at the traces of the cancelled orders."
+
+      - alert: RefundRequired
+        expr: increase(orders_refund_required_total[1h]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "A customer was charged for a cancelled order"
+          description: "{{ $value | printf \"%.0f\" }} payment(s) succeeded for an order that was already cancelled. They must be refunded by hand; search the order-service logs for 'refund required'."
+
+      - alert: MessagesTerminated
+        expr: increase(messaging_consumed_total{outcome="terminated"}[10m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.consumer }} dropped {{ $labels.subject }} messages"
+          description: "Messages were rejected as permanently unprocessable (malformed, unknown order, contradictory state). They are not retried; check the {{ $labels.consumer }} logs for the reason."
+
+  - name: business
+    rules:
+      - alert: OrderCancellationRateHigh
+        expr: |
+          (
+            sum(rate(orders_finished_total{outcome="cancelled"}[5m]))
+            / sum(rate(orders_finished_total[5m]))
+          ) > 0.3
+          and
+          sum(rate(orders_finished_total[5m])) > 0.02
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 30% of orders are being cancelled"
+          description: "{{ $value | humanizePercentage }} of finished orders were cancelled over the last 5 minutes. Check the 'reason' label: payment_failed, out_of_stock or timeout point to different problems."
+
+      - alert: PaymentProviderErrors
+        expr: |
+          sum(rate(payment_provider_calls_total{outcome="error"}[5m]))
+          / sum(rate(payment_provider_calls_total[5m])) > 0.2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "The payment provider is failing"
+          description: "{{ $value | humanizePercentage }} of calls to the payment provider failed with an outage or timeout (declines are not counted). Orders are being retried and will start timing out."
+
+  - name: edge
+    rules:
+      - alert: GatewayHighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m]))
+          ) > 0.05
+          and
+          sum(rate(http_requests_total[5m])) > 0.1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "The API is returning server errors"
+          description: "{{ $value | humanizePercentage }} of requests over the last 5 minutes got a 5xx. Look at which route in the gateway dashboard, then at a failing trace."
