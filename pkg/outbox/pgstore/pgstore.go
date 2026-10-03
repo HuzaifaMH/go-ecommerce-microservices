@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -197,6 +198,21 @@ func (s *Store) Dispatch(ctx context.Context, limit int, publish func(context.Co
 		}
 	}
 	return len(done), pubErr
+}
+
+// Backlog reports how many outbox messages are waiting to be published and how
+// long the oldest has waited (0 when there is none). A growing backlog means
+// events are not reaching the broker.
+func (s *Store) Backlog(ctx context.Context) (pending int64, oldest time.Duration, err error) {
+	var since *time.Time
+	err = s.pool.QueryRow(ctx, `SELECT count(*), min(created_at) FROM outbox WHERE published_at IS NULL`).Scan(&pending, &since)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read outbox backlog: %w", err)
+	}
+	if since != nil {
+		oldest = max(time.Since(*since), 0)
+	}
+	return pending, oldest, nil
 }
 
 // Once implements messaging.Inbox. The inbox row and fn's writes commit

@@ -61,27 +61,50 @@ func EnsureStream(ctx context.Context, js jetstream.JetStream, cfg StreamConfig)
 
 // JetStreamPublisher publishes to JetStream, using the message ID for broker-side de-duplication.
 type JetStreamPublisher struct {
-	js jetstream.JetStream
+	js       jetstream.JetStream
+	observer Observer
+}
+
+// PublisherOption configures a JetStreamPublisher.
+type PublisherOption func(*JetStreamPublisher)
+
+// WithObserver reports every publish attempt to o (for metrics).
+func WithObserver(o Observer) PublisherOption {
+	return func(p *JetStreamPublisher) { p.observer = orNoop(o) }
 }
 
 // NewJetStreamPublisher returns a Publisher backed by js.
-func NewJetStreamPublisher(js jetstream.JetStream) *JetStreamPublisher {
-	return &JetStreamPublisher{js: js}
+func NewJetStreamPublisher(js jetstream.JetStream, opts ...PublisherOption) *JetStreamPublisher {
+	p := &JetStreamPublisher{js: js, observer: noopObserver{}}
+	for _, o := range opts {
+		o(p)
+	}
+	return p
 }
 
-// Publish sends m and waits for the broker's acknowledgement.
+// Publish sends m and waits for the broker's acknowledgement. It records a
+// producer span that continues the trace stored in m.Headers and hands its own
+// context on to consumers.
 func (p *JetStreamPublisher) Publish(ctx context.Context, m Message) error {
 	if m.ID == "" {
+		p.observer.Published(m.Subject, false, 0)
 		return ErrMissingID
 	}
+	start := time.Now()
+	ctx, span, headers := startPublishSpan(ctx, m)
+	defer span.End()
+
 	msg := nats.NewMsg(m.Subject)
 	msg.Data = m.Data
-	for k, v := range m.Headers {
+	for k, v := range headers {
 		msg.Header.Set(k, v)
 	}
 	if _, err := p.js.PublishMsg(ctx, msg, jetstream.WithMsgID(m.ID)); err != nil {
+		markFailed(span, err)
+		p.observer.Published(m.Subject, false, time.Since(start))
 		return fmt.Errorf("publish %s: %w", m.Subject, err)
 	}
+	p.observer.Published(m.Subject, true, time.Since(start))
 	return nil
 }
 
@@ -96,6 +119,8 @@ type ConsumerConfig struct {
 	AckWait time.Duration
 	// RetryDelay is the delay before a failed message is redelivered. Defaults to 2s.
 	RetryDelay time.Duration
+	// Observer, if set, is told about every delivery (for metrics).
+	Observer Observer
 }
 
 func (c *ConsumerConfig) setDefaults() {
@@ -153,27 +178,39 @@ func dispatch(ctx context.Context, m jetstream.Msg, cfg ConsumerConfig, log *slo
 		log = log.With("correlation_id", id)
 	}
 
+	// The span continues the trace of whoever published the message, and the
+	// handler runs inside it, so its own spans and log lines belong to that trace.
+	ctx, span := startConsumeSpan(ctx, cfg.Durable, msg)
+	defer span.End()
+	start := time.Now()
+
 	err := safeHandle(ctx, h, msg)
+	outcome := OutcomeAck
 	switch {
 	case err == nil:
 		if err := m.Ack(); err != nil {
-			log.Error("ack failed", "error", err)
+			log.ErrorContext(ctx, "ack failed", "error", err)
 		}
 	case errors.Is(err, ErrPermanent):
-		log.Error("terminating message", "error", err)
+		outcome = OutcomeTerminated
+		markFailed(span, err)
+		log.ErrorContext(ctx, "terminating message", "error", err)
 		if err := m.Term(); err != nil {
-			log.Error("term failed", "error", err)
+			log.ErrorContext(ctx, "term failed", "error", err)
 		}
 	default:
+		outcome = OutcomeRetry
+		markFailed(span, err)
 		attempt := uint64(0)
 		if md, mdErr := m.Metadata(); mdErr == nil {
 			attempt = md.NumDelivered
 		}
-		log.Warn("handler failed, will retry", "error", err, "attempt", attempt, "max_deliver", cfg.MaxDeliver)
+		log.WarnContext(ctx, "handler failed, will retry", "error", err, "attempt", attempt, "max_deliver", cfg.MaxDeliver)
 		if err := m.NakWithDelay(cfg.RetryDelay); err != nil {
-			log.Error("nak failed", "error", err)
+			log.ErrorContext(ctx, "nak failed", "error", err)
 		}
 	}
+	orNoop(cfg.Observer).Consumed(cfg.Durable, msg.Subject, outcome, time.Since(start))
 }
 
 func safeHandle(ctx context.Context, h Handler, m Message) (err error) {
