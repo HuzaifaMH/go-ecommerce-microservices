@@ -66,6 +66,10 @@ lint: ## Run golangci-lint (must be installed)
 test: ## Run all tests with the race detector (integration tests need Docker)
 	$(GO) test -race -count=1 -cover ./...
 
+.PHONY: test-race-docker
+test-race-docker: ## Run the short tests under the race detector in a Linux container (for machines without a C toolchain, e.g. Windows)
+	docker run --rm -v "$(CURDIR):/src" -v gomodcache:/go/pkg/mod -w /src -e GOFLAGS=-buildvcs=false golang:1.26 go test -race -short -count=1 ./...
+
 .PHONY: test-short
 test-short: ## Run fast tests only (skips Docker-based integration tests)
 	$(GO) test -short -count=1 ./...

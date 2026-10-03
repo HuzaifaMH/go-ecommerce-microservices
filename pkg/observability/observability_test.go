@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -315,14 +316,25 @@ func TestStartRejectsABadSampleRatioFromTheEnvironment(t *testing.T) {
 
 // --- outbox gauges ---
 
+// fakeBacklog is read by the gauge loop's goroutine while the test changes it,
+// so access is guarded.
 type fakeBacklog struct {
+	mu      sync.Mutex
 	pending int64
 	oldest  time.Duration
 	err     error
 }
 
 func (f *fakeBacklog) Backlog(context.Context) (int64, time.Duration, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.pending, f.oldest, f.err
+}
+
+func (f *fakeBacklog) setErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
 }
 
 var discard = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -368,7 +380,7 @@ func TestOutboxGaugesFollowTheBacklogAndSurviveErrors(t *testing.T) {
 	}
 
 	// A failing database must not zero the gauges: that would hide the very problem being reported.
-	src.err = errors.New("database down")
+	src.setErr(errors.New("database down"))
 	time.Sleep(50 * time.Millisecond)
 	if got := gaugeValue(t, reg, "outbox_pending_messages"); got != 7 {
 		t.Errorf("pending = %v after a failed refresh, want the last known value 7", got)
