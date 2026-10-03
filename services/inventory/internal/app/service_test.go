@@ -271,6 +271,43 @@ func TestReleaseRequiresOrderID(t *testing.T) {
 	}
 }
 
+type fakeMetrics struct{ reservations, releases []string }
+
+func (m *fakeMetrics) Reservation(outcome string) { m.reservations = append(m.reservations, outcome) }
+func (m *fakeMetrics) Release(outcome string)     { m.releases = append(m.releases, outcome) }
+
+func TestMetricsReportEachOutcomeOnceAndOnlyAfterCommit(t *testing.T) {
+	svc, repo, _ := setup(domain.Item{SKU: "A", OnHand: 5})
+	m := &fakeMetrics{}
+	svc.WithMetrics(m)
+	ctx := context.Background()
+
+	_ = svc.Reserve(ctx, "o-1", []domain.Line{{SKU: "A", Quantity: 3}}) // reserved
+	_ = svc.Reserve(ctx, "o-1", []domain.Line{{SKU: "A", Quantity: 3}}) // same order again: duplicate
+	_ = svc.Reserve(ctx, "o-2", []domain.Line{{SKU: "A", Quantity: 3}}) // only 2 left: rejected
+	_ = svc.Release(ctx, "o-1")                                         // released
+	_ = svc.Release(ctx, "o-1")                                         // already released: noop
+	_ = svc.Release(ctx, "never-reserved")                              // noop
+	_ = svc.Reserve(ctx, "o-1", nil)                                    // malformed: not a business outcome
+
+	if want := []string{"reserved", "duplicate", "rejected"}; !reflect.DeepEqual(m.reservations, want) {
+		t.Errorf("reservations = %v, want %v", m.reservations, want)
+	}
+	if want := []string{"released", "noop", "noop"}; !reflect.DeepEqual(m.releases, want) {
+		t.Errorf("releases = %v, want %v", m.releases, want)
+	}
+
+	// A failure that rolls the transaction back counts nothing.
+	m.reservations = nil
+	repo.failSave = errors.New("disk full")
+	if err := svc.Reserve(ctx, "o-3", []domain.Line{{SKU: "A", Quantity: 1}}); err == nil {
+		t.Fatal("expected error")
+	}
+	if len(m.reservations) != 0 {
+		t.Errorf("reservations = %v after a rolled-back reserve, want none", m.reservations)
+	}
+}
+
 func TestListItemsPagination(t *testing.T) {
 	svc, _, _ := setup(
 		domain.Item{SKU: "A"}, domain.Item{SKU: "B"}, domain.Item{SKU: "C"}, domain.Item{SKU: "D"}, domain.Item{SKU: "E"})
